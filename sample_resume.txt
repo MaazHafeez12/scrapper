@@ -1,0 +1,54 @@
+JOHN DOE
+Senior Software Engineer
+john.doe@email.com | (555) 123-4567 | San Francisco, CA
+LinkedIn: linkedin.com/in/johndoe | GitHub: github.com/johndoe
+
+PROFESSIONAL SUMMARY
+Senior Software Engineer with 7+ years of experience building scalable web applications.
+Expert in Python, JavaScript, and cloud technologies. Seeking remote full-time opportunities.
+Salary expectation: $140,000+
+
+TECHNICAL SKILLS
+Languages: Python, JavaScript, TypeScript, Go, SQL
+Frontend: React, Vue.js, HTML5, CSS3, Tailwind CSS
+Backend: Django, Flask, FastAPI, Node.js, Express
+Databases: PostgreSQL, MongoDB, Redis, Elasticsearch
+Cloud & DevOps: AWS, Docker, Kubernetes, Terraform, Jenkins, CI/CD
+Tools: Git, Linux, Jira, VS Code
+
+PROFESSIONAL EXPERIENCE
+
+Senior Software Engineer | TechCorp Inc | 2020 - Present
+• Architected and developed microservices using Python, Django, and FastAPI
+• Implemented frontend applications with React and TypeScript
+• Deployed and managed infrastructure on AWS using Docker and Kubernetes
+• Designed PostgreSQL database schemas and optimized query performance
+• Implemented CI/CD pipelines using Jenkins and GitLab CI
+• Mentored junior developers and conducted code reviews
+
+Software Engineer | StartupCo | 2018 - 2020
+• Built REST APIs with Python, Flask, and PostgreSQL
+• Developed responsive web interfaces using React and Vue.js
+• Managed AWS infrastructure including EC2, S3, RDS, and Lambda
+• Implemented Redis caching to improve application performance
+• Collaborated with cross-functional teams using Agile methodologies
+
+Junior Developer | WebSolutions | 2016 - 2018
+• Developed web applications using JavaScript, HTML, and CSS
+• Worked with Node.js and Express for backend services
+• Maintained MongoDB databases
+• Participated in code reviews and sprint planning
+
+EDUCATION
+Bachelor of Science in Computer Science
+University of California, Berkeley | 2012 - 2016
+
+CERTIFICATIONS
+• AWS Certified Solutions Architect
+• Certified Kubernetes Administrator (CKA)
+
+PREFERENCES
+• Open to remote opportunities
+• Interested in full-time positions
+• Minimum salary: $140,000
+• Preferred tech stack: Python, React, AWS, Kubernetes

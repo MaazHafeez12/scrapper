@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Scraper Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 40px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 40px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+
+        .stat-card h3 {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .stat-card .value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .filters {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 30px;
+        }
+
+        .filters h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-group label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 6px;
+        }
+
+        .filter-group input,
+        .filter-group select {
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        /* Simple progress bar */
+        .progress {
+            display: none;
+            width: 260px;
+            height: 10px;
+            background: #eee;
+            border-radius: 6px;
+            overflow: hidden;
+            align-self: center;
+        }
+        .progress-inner {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #667eea, #45a049);
+            transition: width 0.3s ease;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .btn-success {
+            background: #4caf50;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #45a049;
+        }
+
+        .jobs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .jobs-header h2 {
+            color: #333;
+        }
+
+        .export-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .jobs-list {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            overflow: hidden;
+        }
+
+        .job-card {
+            padding: 20px 25px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s;
+            cursor: pointer;
+        }
+
+        .job-card:hover {
+            background-color: #f9fafb;
+        }
+
+        .job-card:last-child {
+            border-bottom: none;
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .job-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .job-company {
+            font-size: 15px;
+            color: #666;
+        }
+
+        .job-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-remote {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .badge-platform {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .badge-status-new {
+            background: #fff3e0;
+            color: #e65100;
+        }
+
+        .badge-status-applied {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .badge-status-interested {
+            background: #e1f5fe;
+            color: #01579b;
+        }
+
+        .badge-status-rejected {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .job-details {
+            display: flex;
+            gap: 20px;
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        .job-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 50px auto;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h2 {
+            color: #333;
+        }
+
+        .close {
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #000;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 40px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            .header {
+                padding: 15px 20px;
+            }
+
+            .stat-card .value {
+                font-size: 28px;
+            }
+
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+
+            .job-header {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h1>🎯 Job Scraper Dashboard</h1>
+            <p>Track and manage your job opportunities</p>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <a href="/" style="padding: 8px 16px; background: white; color: #667eea; border-radius: 6px; text-decoration: none; font-weight: 600;">📊 List View</a>
+            <a href="/kanban" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; border-radius: 6px; text-decoration: none;">📋 Kanban View</a>
+            <a href="/analytics" style="padding: 8px 16px; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white; border-radius: 6px; text-decoration: none;">📈 Analytics</a>
+            <button id="scrape-now-btn" class="btn btn-primary" style="margin-left: 8px;">🔄 Scrape now</button>
+            <button id="scheduler-toggle-btn" class="btn btn-secondary" title="Toggle auto-scrape scheduler">⏱️ Scheduler</button>
+            <span id="scheduler-status" style="font-size: 12px; opacity: 0.9; min-width: 220px;"></span>
+            <span id="scrape-status" style="font-size: 12px; opacity: 0.85;"></span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Statistics -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Jobs</h3>
+                <div class="value" id="stat-total">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Remote Jobs</h3>
+                <div class="value" id="stat-remote">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>New (24h)</h3>
+                <div class="value" id="stat-new">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Applied</h3>
+                <div class="value" id="stat-applied">-</div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <h2>🔍 Filter Jobs</h2>
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label for="filter-keywords">Keywords</label>
+                    <input type="text" id="filter-keywords" placeholder="e.g., Python Developer">
+                </div>
+                <div class="filter-group">
+                    <label for="filter-platform">Platform</label>
+                    <select id="filter-platform">
+                        <option value="">All Platforms</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="filter-status">Status</label>
+                    <select id="filter-status">
+                        <option value="">All Statuses</option>
+                        <option value="new">New</option>
+                        <option value="applied">Applied</option>
+                        <option value="interested">Interested</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="archived">Archived</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="filter-remote">Remote Only</label>
+                    <select id="filter-remote">
+                        <option value="false">All Jobs</option>
+                        <option value="true">Remote Only</option>
+                    </select>
+                </div>
+            </div>
+            <div class="filter-row" style="margin-top: 10px; align-items: end;">
+                <div class="filter-group">
+                    <label>Runtime</label>
+                    <div id="runtime-config" style="font-size: 13px; color: #555;">Loading…</div>
+                </div>
+                <div class="filter-group">
+                    <label for="scheduler-interval">Scheduler interval (minutes)</label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="number" id="scheduler-interval" min="5" step="5" value="60" style="max-width: 140px;">
+                        <button class="btn btn-secondary btn-small" onclick="applySchedulerInterval()">Update</button>
+                    </div>
+                </div>
+            </div>
+            <div class="filter-actions">
+                <button class="btn btn-primary" onclick="loadJobs()">Apply Filters</button>
+                <button class="btn btn-secondary" onclick="resetFilters()">Reset</button>
+                <button class="btn btn-secondary" onclick="batchFindContacts(false)">Find contacts for all</button>
+                <button class="btn btn-secondary" onclick="batchFindContacts(true)" title="Also verify MX (slower)">Find contacts + Verify</button>
+                <button class="btn btn-secondary" onclick="cancelContactsBatch()" title="Cancel running contacts job">Cancel</button>
+                <div id="contacts-progress" class="progress"><div id="contacts-progress-inner" class="progress-inner"></div></div>
+                <span id="contacts-batch-status" style="font-size:12px; color:#555; margin-left:8px;"></span>
+            </div>
+        </div>
+
+        <!-- Jobs List -->
+        <div class="jobs-header">
+            <h2>📋 Jobs <span id="jobs-count"></span></h2>
+            <div class="export-buttons">
+                <button class="btn btn-success btn-small" onclick="exportJobs('csv')">Export CSV</button>
+                <button class="btn btn-success btn-small" onclick="exportJobs('json')">Export JSON</button>
+                <button class="btn btn-success btn-small" onclick="exportJobs('excel')">Export Excel</button>
+                <span style="margin-left:12px; font-size:13px; color:#555;">Min contact conf (%)</span>
+                <input type="number" id="min-contact-conf" min="0" max="100" step="5" value="70" style="width:80px;">
+                <button class="btn btn-secondary btn-small" onclick="exportContacts('csv')">Export Contacts CSV</button>
+                <button class="btn btn-secondary btn-small" onclick="exportContacts('json')">Export Contacts JSON</button>
+                <label style="display:flex; align-items:center; gap:6px; margin-left:12px; font-size:13px; color:#555;">
+                    <input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)" /> Select all
+                </label>
+                <button class="btn btn-primary btn-small" onclick="exportSelectedContacts('csv')" title="Export contacts for selected jobs">Export Selected Contacts CSV</button>
+                <button class="btn btn-primary btn-small" onclick="exportSelectedContacts('json')" title="Export contacts for selected jobs">Export Selected Contacts JSON</button>
+            </div>
+        </div>
+
+        <div class="jobs-list" id="jobs-list">
+            <div class="loading">Loading jobs...</div>
+        </div>
+    </div>
+
+    <!-- Job Details Modal -->
+    <div id="job-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Job Details</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+    let currentJobs = [];
+    let selectedJobIds = new Set();
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const stats = data.stats;
+                    document.getElementById('stat-total').textContent = stats.total_jobs || 0;
+                    document.getElementById('stat-remote').textContent = stats.remote_jobs || 0;
+                    document.getElementById('stat-new').textContent = stats.new_last_24h || 0;
+                    document.getElementById('stat-applied').textContent = stats.by_status?.applied || 0;
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // Load platforms for filter
+        async function loadPlatforms() {
+            try {
+                const response = await fetch('/api/platforms');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const select = document.getElementById('filter-platform');
+                    data.platforms.forEach(platform => {
+                        const option = document.createElement('option');
+                        option.value = platform;
+                        option.textContent = platform;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load platforms:', error);
+            }
+        }
+
+        // Load jobs with filters
+        async function loadJobs() {
+            const keywords = document.getElementById('filter-keywords').value;
+            const platform = document.getElementById('filter-platform').value;
+            const status = document.getElementById('filter-status').value;
+            const remoteOnly = document.getElementById('filter-remote').value;
+
+            const params = new URLSearchParams();
+            if (keywords) params.append('keywords', keywords);
+            if (platform) params.append('platform', platform);
+            if (status) params.append('status', status);
+            params.append('remote_only', remoteOnly);
+            params.append('limit', 100);
+
+            try {
+                const jobsList = document.getElementById('jobs-list');
+                jobsList.innerHTML = '<div class="loading">Loading jobs...</div>';
+
+                const response = await fetch(`/api/jobs?${params}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentJobs = data.jobs;
+                    displayJobs(data.jobs);
+                    document.getElementById('jobs-count').textContent = `(${data.count})`;
+                    const selectAll = document.getElementById('select-all');
+                    if (selectAll) {
+                        selectAll.checked = currentJobs.length > 0 && currentJobs.every(j => selectedJobIds.has(j.id));
+                    }
+                } else {
+                    jobsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p>Failed to load jobs</p></div>';
+                }
+            } catch (error) {
+                console.error('Failed to load jobs:', error);
+                document.getElementById('jobs-list').innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p>Failed to load jobs</p></div>';
+            }
+        }
+
+        // Display jobs
+        function displayJobs(jobs) {
+            const jobsList = document.getElementById('jobs-list');
+            
+            if (jobs.length === 0) {
+                jobsList.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><p>No jobs found</p></div>';
+                return;
+            }
+
+            jobsList.innerHTML = jobs.map(job => `
+                <div class="job-card" onclick="showJobDetails(${job.id})">
+                    <div class="job-header">
+                        <div style="display:flex; align-items:start; gap:10px;">
+                            <input type="checkbox" ${selectedJobIds.has(job.id) ? 'checked' : ''} onclick="event.stopPropagation(); toggleJobSelection(${job.id}, this.checked)"/>
+                            <div>
+                                <div class="job-title">${escapeHtml(job.title)}</div>
+                                <div class="job-company">${escapeHtml(job.company)}</div>
+                            </div>
+                        </div>
+                        <div class="job-badges">
+                            ${job.remote ? '<span class="badge badge-remote">🏠 Remote</span>' : ''}
+                            <span class="badge badge-platform">${escapeHtml(job.platform)}</span>
+                            <span class="badge badge-status-${job.status}">${escapeHtml(job.status)}</span>
+                        </div>
+                    </div>
+                    <div class="job-details">
+                        <span>📍 ${escapeHtml(job.location || 'N/A')}</span>
+                        ${job.salary ? `<span>💰 ${escapeHtml(job.salary)}</span>` : ''}
+                        <span>🕒 ${formatDate(job.scraped_at)}</span>
+                    </div>
+                    <div class="job-actions" onclick="event.stopPropagation()">
+                        <button class="btn btn-primary btn-small" onclick="updateStatus(${job.id}, 'applied')">✓ Applied</button>
+                        <button class="btn btn-secondary btn-small" onclick="updateStatus(${job.id}, 'interested')">★ Interested</button>
+                        <button class="btn btn-secondary btn-small" onclick="updateStatus(${job.id}, 'rejected')">✗ Reject</button>
+                        <a href="${escapeHtml(job.url)}" target="_blank" class="btn btn-success btn-small">View Job →</a>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Show job details in modal
+        async function showJobDetails(jobId) {
+            try {
+                const response = await fetch(`/api/jobs/${jobId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const job = data.job;
+                    const modalBody = document.getElementById('modal-body');
+                    
+                    let contactsHtml = '';
+                    try {
+                        const cResp = await fetch(`/api/jobs/${jobId}/contacts`);
+                        const cData = await cResp.json();
+                        if (cData.success) {
+                            const list = cData.contacts || [];
+                            if (list.length > 0) {
+                                const sorted = list.slice().sort((a,b) => (b.confidence||0) - (a.confidence||0));
+                                contactsHtml = '<ul style="margin-left:18px">' + sorted.map(c => `<li>${escapeHtml(c.email)} <span class="badge" style="background:#eef; color:#225">${escapeHtml(c.type||'extracted')}</span> <span class="badge" style="background:#efe; color:#252">${escapeHtml(c.source||'')}</span> <span class="badge" style="background:#ffe; color:#662">${(Math.round((c.confidence||0)*100))}%</span></li>`).join('') + '</ul>';
+                            } else {
+                                contactsHtml = '<div style="color:#777">No contacts stored yet.</div>';
+                            }
+                        }
+                    } catch(e) { console.error('contact fetch failed', e); }
+
+                    modalBody.innerHTML = `
+                        <h3>${escapeHtml(job.title)}</h3>
+                        <p><strong>Company:</strong> ${escapeHtml(job.company)}</p>
+                        <p><strong>Location:</strong> ${escapeHtml(job.location || 'N/A')}</p>
+                        ${job.salary ? `<p><strong>Salary:</strong> ${escapeHtml(job.salary)}</p>` : ''}
+                        <p><strong>Platform:</strong> ${escapeHtml(job.platform)}</p>
+                        <p><strong>Remote:</strong> ${job.remote ? 'Yes' : 'No'}</p>
+                        <p><strong>Status:</strong> ${escapeHtml(job.status)}</p>
+                        <p><strong>Scraped:</strong> ${formatDate(job.scraped_at)}</p>
+                        ${job.description ? `<p><strong>Description:</strong></p><p>${escapeHtml(job.description).substring(0, 500)}...</p>` : ''}
+                        ${job.notes ? `<p><strong>Notes:</strong> ${escapeHtml(job.notes)}</p>` : ''}
+                        <p><a href="${escapeHtml(job.url)}" target="_blank" class="btn btn-primary">View Full Job →</a></p>
+                        <hr style="margin:18px 0"/>
+                        <h4>Contacts & Emails</h4>
+                        <div id="contacts-container">${contactsHtml}</div>
+                        <div style="margin-top:8px">
+                            <button class="btn btn-secondary" onclick="refreshContacts(${jobId}, false)">🔎 Find contacts</button>
+                            <button class="btn btn-secondary" onclick="refreshContacts(${jobId}, true)" title="Also check domain MX records (slower)">✅ Verify domain</button>
+                        </div>
+                    `;
+                    
+                    document.getElementById('job-modal').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Failed to load job details:', error);
+            }
+        }
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('job-modal').style.display = 'none';
+        }
+
+        async function refreshContacts(jobId, verifyMx=false) {
+            const container = document.getElementById('contacts-container');
+            if (container) container.innerHTML = '<div class="loading">Scanning for contacts…</div>';
+            try {
+                const resp = await fetch(`/api/jobs/${jobId}/contacts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verify_mx: verifyMx }) });
+                const data = await resp.json();
+                if (data.success) {
+                    const list = (data.contacts || []).slice().sort((a,b) => (b.confidence||0) - (a.confidence||0));
+                    if (list.length > 0) {
+                        container.innerHTML = '<ul style="margin-left:18px">' + list.map(c => `<li>${escapeHtml(c.email)} <span class="badge" style="background:#eef; color:#225">${escapeHtml(c.type||'extracted')}</span> <span class="badge" style="background:#efe; color:#252">${escapeHtml(c.source||'')}</span> <span class="badge" style="background:#ffe; color:#662">${(Math.round((c.confidence||0)*100))}%</span></li>`).join('') + '</ul>';
+                    } else {
+                        container.innerHTML = '<div style="color:#777">No contacts found.</div>';
+                    }
+                } else {
+                    container.innerHTML = `<div style="color:#a00">Failed: ${escapeHtml(data.error||'unknown')}</div>`;
+                }
+            } catch (e) {
+                console.error(e);
+                if (container) container.innerHTML = '<div style="color:#a00">Error while finding contacts.</div>';
+            }
+        }
+
+        // Update job status
+        async function updateStatus(jobId, status) {
+            try {
+                const response = await fetch(`/api/jobs/${jobId}/status`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ status })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    loadJobs();
+                    loadStats();
+                    alert('Status updated successfully!');
+                } else {
+                    alert('Failed to update status: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Failed to update status:', error);
+                alert('Failed to update status');
+            }
+        }
+
+        // Export jobs
+        function exportJobs(format) {
+            const platform = document.getElementById('filter-platform').value;
+            const status = document.getElementById('filter-status').value;
+            const remoteOnly = document.getElementById('filter-remote').value;
+
+            const params = new URLSearchParams();
+            params.append('format', format);
+            if (platform) params.append('platform', platform);
+            if (status) params.append('status', status);
+            params.append('remote_only', remoteOnly);
+
+            window.location.href = `/api/export?${params}`;
+        }
+
+        function exportContacts(format) {
+            const platform = document.getElementById('filter-platform').value;
+            const minConf = parseFloat(document.getElementById('min-contact-conf').value || '0') || 0;
+            const keywords = document.getElementById('filter-keywords').value;
+            const status = document.getElementById('filter-status').value;
+            const remoteOnly = document.getElementById('filter-remote').value;
+            const params = new URLSearchParams();
+            params.append('format', format);
+            if (platform) params.append('platform', platform);
+            params.append('min_confidence', String(minConf));
+            if (keywords) params.append('keywords', keywords);
+            if (status) params.append('status', status);
+            params.append('remote_only', remoteOnly);
+            window.location.href = `/api/export/contacts?${params}`;
+        }
+
+        async function exportSelectedContacts(format) {
+            try {
+                if (selectedJobIds.size === 0) {
+                    alert('No jobs selected. Use the checkboxes to select jobs.');
+                    return;
+                }
+                const minConf = parseFloat(document.getElementById('min-contact-conf').value || '0') || 0;
+                const body = { job_ids: Array.from(selectedJobIds), format, min_confidence: minConf };
+                const resp = await fetch('/api/export/contacts/selected', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    throw new Error('Export failed: ' + txt);
+                }
+                const blob = await resp.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                a.download = `contacts-selected-${ts}.${format === 'json' ? 'json' : 'csv'}`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                console.error(e);
+                alert(String(e));
+            }
+        }
+
+        async function batchFindContacts(verifyMx=false) {
+            const statusEl = document.getElementById('contacts-batch-status');
+            const bar = document.getElementById('contacts-progress');
+            const barInner = document.getElementById('contacts-progress-inner');
+            const keywords = document.getElementById('filter-keywords').value;
+            const platform = document.getElementById('filter-platform').value;
+            const status = document.getElementById('filter-status').value;
+            const remoteOnly = document.getElementById('filter-remote').value === 'true';
+            try {
+                statusEl.textContent = 'Starting contacts scan…';
+                if (bar) { bar.style.display = 'inline-block'; barInner.style.width = '0%'; }
+                const resp = await fetch('/api/contacts/find', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keywords, platform, status, remote_only: remoteOnly, verify_mx: verifyMx })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    statusEl.textContent = 'Contacts scan failed: ' + (data.error||'unknown');
+                    if (bar) bar.style.display = 'none';
+                    return;
+                }
+                // Poll status
+                const poll = async () => {
+                    try {
+                        const s = await fetch('/api/contacts/find/status').then(r => r.json());
+                        if (s.success) {
+                            const d = s.data;
+                            if (d.total > 0) {
+                                statusEl.textContent = `Contacts scan: ${d.processed}/${d.total} • Found ${d.found_contacts}`;
+                                const pct = Math.floor((d.processed / d.total) * 100);
+                                if (bar) { bar.style.display = 'inline-block'; barInner.style.width = pct + '%'; }
+                            } else if (d.running) {
+                                statusEl.textContent = 'Contacts scan running…';
+                            }
+                            if (!d.running) {
+                                statusEl.textContent = `Contacts scan done: ${d.processed}/${d.total} • Found ${d.found_contacts}`;
+                                if (bar) { barInner.style.width = '100%'; setTimeout(() => { bar.style.display = 'none'; }, 1000); }
+                                loadJobs();
+                                return; // stop polling
+                            }
+                        }
+                    } catch (_) { /* ignore */ }
+                    setTimeout(poll, 1500);
+                };
+                poll();
+            } catch (e) {
+                console.error(e);
+                statusEl.textContent = 'Contacts scan error';
+                const bar = document.getElementById('contacts-progress');
+                if (bar) bar.style.display = 'none';
+            }
+        }
+
+        async function cancelContactsBatch() {
+            try {
+                const resp = await fetch('/api/contacts/find/cancel', { method: 'POST' });
+                if (resp.ok) {
+                    document.getElementById('contacts-batch-status').textContent = 'Cancel requested…';
+                } else {
+                    const txt = await resp.text();
+                    alert('Cancel failed: ' + txt);
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Cancel error: ' + e);
+            }
+        }
+
+        // Reset filters
+        function resetFilters() {
+            document.getElementById('filter-keywords').value = '';
+            document.getElementById('filter-platform').value = '';
+            document.getElementById('filter-status').value = '';
+            document.getElementById('filter-remote').value = 'false';
+            loadJobs();
+        }
+
+        // Utility functions
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            return date.toLocaleDateString();
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('job-modal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        // Initialize
+        window.onload = function() {
+            loadStats();
+            loadPlatforms();
+            loadJobs();
+            loadRuntimeConfig();
+            loadSchedulerStatus();
+            
+            // Refresh stats every 30 seconds
+            setInterval(loadStats, 30000);
+            // Refresh scheduler status every 60 seconds
+            setInterval(loadSchedulerStatus, 60000);
+            // Wire scrape button
+            const btn = document.getElementById('scrape-now-btn');
+            if (btn) btn.addEventListener('click', () => triggerScrape());
+            const schedBtn = document.getElementById('scheduler-toggle-btn');
+            if (schedBtn) schedBtn.addEventListener('click', () => toggleScheduler());
+        };
+
+        // Selection helpers
+        function toggleJobSelection(jobId, checked) {
+            if (checked) selectedJobIds.add(jobId); else selectedJobIds.delete(jobId);
+            // Keep select-all in sync
+            const allChecked = currentJobs.length > 0 && currentJobs.every(j => selectedJobIds.has(j.id));
+            const selectAll = document.getElementById('select-all');
+            if (selectAll) selectAll.checked = allChecked;
+        }
+
+        function toggleSelectAll(checked) {
+            if (checked) {
+                currentJobs.forEach(j => selectedJobIds.add(j.id));
+            } else {
+                selectedJobIds.clear();
+            }
+            // Re-render to update checkboxes
+            displayJobs(currentJobs);
+        }
+
+        // Trigger a backend scrape using default server filters
+        async function triggerScrape() {
+            const btn = document.getElementById('scrape-now-btn');
+            const status = document.getElementById('scrape-status');
+            try {
+                btn.disabled = true;
+                const original = btn.textContent;
+                btn.textContent = '⏳ Scraping...';
+                status.textContent = 'This may take a couple of minutes.';
+
+                // Optional: use current keyword/platform filters as hints
+                const payload = {};
+                const kw = document.getElementById('filter-keywords')?.value || '';
+                if (kw) payload.keywords = kw;
+                const remoteVal = document.getElementById('filter-remote')?.value;
+                if (remoteVal === 'true') payload.remote = true;
+                const platform = document.getElementById('filter-platform')?.value;
+                if (platform) payload.platforms = [platform];
+
+                const resp = await fetch('/api/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    status.textContent = `Scraped ${data.scraped} jobs • New: ${data.saved?.new ?? 0}, Updated: ${data.saved?.updated ?? 0}`;
+                } else {
+                    status.textContent = `Scrape failed: ${data.error || 'Unknown error'}`;
+                }
+            } catch (e) {
+                console.error(e);
+                status.textContent = `Scrape error: ${e}`;
+            } finally {
+                // Refresh lists/stats after completion
+                await loadStats();
+                await loadJobs();
+                const btn = document.getElementById('scrape-now-btn');
+                btn.textContent = '🔄 Scrape now';
+                btn.disabled = false;
+            }
+        }
+
+        // Load runtime config
+        async function loadRuntimeConfig() {
+            try {
+                const resp = await fetch('/api/config/runtime');
+                const data = await resp.json();
+                if (data.success) {
+                    const d = data.data;
+                    const stealth = d.use_stealth ? (d.stealth_backend || 'on') : 'off';
+                    const headless = d.headless ? 'on' : 'off';
+                    const proxy = d.proxy_set ? 'configured' : 'none';
+                    document.getElementById('runtime-config').textContent = `Stealth: ${stealth} • Headless: ${headless} • Proxy: ${proxy}`;
+                }
+            } catch (e) {
+                console.error('Failed to load runtime config', e);
+            }
+        }
+
+        // Scheduler controls
+        async function loadSchedulerStatus() {
+            try {
+                const resp = await fetch('/api/scheduler/status');
+                const data = await resp.json();
+                if (data.success) {
+                    const s = data.data;
+                    const on = s.runtime_enabled;
+                    const next = s.next_run_iso ? new Date(s.next_run_iso).toLocaleString() : '—';
+                    document.getElementById('scheduler-status').textContent = `Scheduler: ${on ? 'On' : 'Off'} • Every ${s.interval_minutes}m • Next: ${next}`;
+                    const input = document.getElementById('scheduler-interval');
+                    if (input && s.interval_minutes) input.value = s.interval_minutes;
+                    document.getElementById('scheduler-toggle-btn').textContent = on ? '⏸️ Pause' : '▶️ Start';
+                }
+            } catch (e) {
+                console.error('Failed to load scheduler status', e);
+            }
+        }
+
+        async function toggleScheduler() {
+            try {
+                // Get current status first
+                const st = await fetch('/api/scheduler/status').then(r => r.json());
+                const enable = !(st.success && st.data.runtime_enabled);
+                const resp = await fetch('/api/scheduler/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enable })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    loadSchedulerStatus();
+                } else {
+                    alert('Failed to toggle scheduler: ' + (data.error || 'unknown'));
+                }
+            } catch (e) {
+                console.error('Failed to toggle scheduler', e);
+            }
+        }
+
+        async function applySchedulerInterval() {
+            try {
+                const minutes = parseInt(document.getElementById('scheduler-interval').value || '60', 10);
+                const resp = await fetch('/api/scheduler/interval', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ minutes })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    loadSchedulerStatus();
+                } else {
+                    alert('Failed to update interval: ' + (data.error || 'unknown'));
+                }
+            } catch (e) {
+                console.error('Failed to update interval', e);
+            }
+        }
+    </script>
+</body>
+</html>

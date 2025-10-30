@@ -1,0 +1,114 @@
+# Docker Compose configuration for Job Scraper Platform
+# Orchestrates the application and optional services
+
+version: '3.8'
+
+services:
+  # Main application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-scraper-app
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persist database
+      - ./data:/app/data
+      # Persist logs
+      - ./logs:/app/logs
+      # Mount config files
+      - ./.env:/app/.env:ro
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - DATABASE_PATH=/app/data/jobs.db
+    restart: unless-stopped
+    networks:
+      - job-scraper-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - redis
+    command: python app.py
+
+  # CLI worker for scheduled scraping
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: job-scraper-worker
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - DATABASE_PATH=/app/data/jobs.db
+    restart: unless-stopped
+    networks:
+      - job-scraper-network
+    depends_on:
+      - app
+      - redis
+    # Run scheduled scraping every 6 hours
+    command: >
+      sh -c "while true; do
+        python main.py --scrape 'python developer' --location 'Remote' --platform indeed,linkedin,remoteok;
+        python main.py --ai-recommend --min-score 75;
+        sleep 21600;
+      done"
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: job-scraper-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - job-scraper-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # Optional: Adminer for database management
+  adminer:
+    image: adminer:latest
+    container_name: job-scraper-adminer
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - job-scraper-network
+    environment:
+      - ADMINER_DEFAULT_SERVER=app
+
+  # Optional: Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: job-scraper-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    restart: unless-stopped
+    networks:
+      - job-scraper-network
+    depends_on:
+      - app
+    profiles:
+      - production
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  job-scraper-network:
+    driver: bridge

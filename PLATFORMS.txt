@@ -1,0 +1,339 @@
+=================================================================
+  COMPLETE PLATFORM LIST - 10 JOB SITES SUPPORTED!
+=================================================================
+
+✅ Your job scraper now supports 10 MAJOR JOB PLATFORMS!
+
+PLATFORM OVERVIEW:
+==================
+
+1. 🔵 INDEED (indeed.com)
+   -------------------------
+   ✓ Largest job board globally
+   ✓ Millions of jobs across all industries
+   ✓ Best for: High volume, diverse roles
+   ✓ Features: Remote filter, salary data, job type
+   ✓ Scraper: Selenium-based with smart waiting
+
+2. 💼 LINKEDIN (linkedin.com/jobs)
+   ----------------------------------
+   ✓ Professional networking platform
+   ✓ Corporate and tech jobs
+   ✓ Best for: Professional roles, networking
+   ✓ Features: Remote filter, infinite scroll
+   ✓ Scraper: Selenium with enhanced scrolling
+
+3. ⭐ GLASSDOOR (glassdoor.com)
+   ------------------------------
+   ✓ Jobs with company reviews
+   ✓ Salary transparency
+   ✓ Best for: Company culture research
+   ✓ Features: Reviews, salaries, popup handling
+   ✓ Scraper: Selenium with auto-popup closing
+
+4. 🌍 REMOTEOK (remoteok.com)
+   ----------------------------
+   ✓ 100% remote tech jobs
+   ✓ Digital nomad friendly
+   ✓ Best for: Remote work, tech roles
+   ✓ Features: Tag-based, salary shown, fast
+   ✓ Scraper: Requests-based (no Selenium needed)
+
+5. 🏠 WEWORKREMOTELY (weworkremotely.com)
+   -----------------------------------------
+   ✓ Curated remote positions
+   ✓ Various categories
+   ✓ Best for: Quality remote jobs
+   ✓ Features: Hand-picked listings
+   ✓ Scraper: Lightweight, fast
+
+6. 🦖 MONSTER (monster.com) ⭐ NEW!
+   ----------------------------------
+   ✓ One of the oldest job boards
+   ✓ Large database of jobs
+   ✓ Best for: Traditional industries
+   ✓ Features: Resume tools, career advice
+   ✓ Scraper: Selenium-based
+
+7. 🎲 DICE (dice.com) ⭐ NEW!
+   ---------------------------
+   ✓ Tech jobs specialist
+   ✓ IT, software, engineering
+   ✓ Best for: Tech professionals
+   ✓ Features: Tech-focused, salary data
+   ✓ Scraper: Selenium-based
+
+8. 🔎 SIMPLYHIRED (simplyhired.com) ⭐ NEW!
+   ------------------------------------------
+   ✓ Aggregates from multiple sources
+   ✓ Wide variety of jobs
+   ✓ Best for: Comprehensive search
+   ✓ Features: Salary estimator, company info
+   ✓ Scraper: Selenium-based
+
+9. 📮 ZIPRECRUITER (ziprecruiter.com) ⭐ NEW!
+   -------------------------------------------
+   ✓ AI-powered matching
+   ✓ One-click apply
+   ✓ Best for: Quick applications
+   ✓ Features: Smart matching, remote filter
+   ✓ Scraper: Selenium-based
+
+10. 🚀 ANGELLIST/WELLFOUND (wellfound.com) ⭐ NEW!
+    ------------------------------------------------
+    ✓ Startup jobs specialist
+    ✓ Equity & startup culture
+    ✓ Best for: Startup enthusiasts
+    ✓ Features: Equity info, startup profiles
+    ✓ Scraper: Selenium with infinite scroll
+
+QUICK COMPARISON:
+=================
+
+Platform          Jobs Volume    Remote Focus    Speed      Best For
+------------------------------------------------------------------------
+Indeed            ⭐⭐⭐⭐⭐    ⭐⭐⭐        Medium     All industries
+LinkedIn          ⭐⭐⭐⭐      ⭐⭐⭐        Slow       Professional
+Glassdoor         ⭐⭐⭐        ⭐⭐          Medium     Company research
+RemoteOK          ⭐⭐⭐        ⭐⭐⭐⭐⭐    Fast       Remote tech
+WeWorkRemotely    ⭐⭐          ⭐⭐⭐⭐⭐    Fast       Quality remote
+Monster           ⭐⭐⭐⭐      ⭐⭐          Medium     Traditional
+Dice              ⭐⭐⭐        ⭐⭐⭐        Medium     Tech jobs
+SimplyHired       ⭐⭐⭐⭐      ⭐⭐          Medium     Job aggregation
+ZipRecruiter      ⭐⭐⭐⭐      ⭐⭐⭐        Medium     Quick apply
+AngelList         ⭐⭐          ⭐⭐⭐        Medium     Startups
+
+USAGE EXAMPLES:
+===============
+
+1. SEARCH ALL 10 PLATFORMS:
+---------------------------
+python main.py --keywords "python developer" --remote
+
+This searches all platforms automatically!
+
+
+2. SEARCH SPECIFIC PLATFORMS:
+-----------------------------
+# Big job boards
+python main.py -k "software engineer" -p indeed linkedin monster
+
+# Remote-focused platforms
+python main.py -k "developer" -r -p remoteok weworkremotely
+
+# Tech-specific platforms
+python main.py -k "data scientist" -p dice angellist
+
+# New platforms only
+python main.py -k "web developer" -p monster dice simplyhired ziprecruiter angellist
+
+
+3. PLATFORM COMBINATIONS:
+-------------------------
+# Maximum coverage (traditional + remote)
+python main.py -k "engineer" -p indeed linkedin monster ziprecruiter remoteok
+
+# Tech jobs combo
+python main.py -k "python" -p dice indeed angellist
+
+# Startup + remote combo
+python main.py -k "full stack" -r -p angellist remoteok weworkremotely
+
+# Enterprise jobs
+python main.py -k "senior manager" -p linkedin glassdoor monster
+
+
+4. PLATFORM-SPECIFIC SEARCHES:
+------------------------------
+# Just Monster
+python main.py -k "project manager" -p monster
+
+# Just Dice (tech jobs)
+python main.py -k "devops engineer" -p dice
+
+# Just AngelList (startups)
+python main.py -k "startup" -p angellist --remote
+
+# Just ZipRecruiter
+python main.py -k "marketing" -p ziprecruiter -l "New York"
+
+
+PLATFORM RECOMMENDATIONS:
+=========================
+
+FOR REMOTE JOBS:
+----------------
+python main.py -k "your job" -r -p remoteok weworkremotely indeed
+
+FOR TECH JOBS:
+--------------
+python main.py -k "your job" -p dice angellist indeed linkedin
+
+FOR STARTUPS:
+-------------
+python main.py -k "your job" -p angellist indeed
+
+FOR ENTERPRISE:
+---------------
+python main.py -k "your job" -p linkedin glassdoor monster
+
+FOR MAXIMUM COVERAGE:
+---------------------
+python main.py -k "your job" --remote
+# This searches ALL 10 platforms!
+
+FOR FAST TESTING:
+-----------------
+python main.py -k "developer" -p remoteok --max-pages 1
+# RemoteOK is fastest (no Selenium)
+
+
+PLATFORM FEATURES:
+==================
+
+REMOTE JOBS:
+• Indeed: ✅ Remote filter
+• LinkedIn: ✅ Remote filter
+• Glassdoor: ✅ Remote filter
+• RemoteOK: ✅ 100% remote
+• WeWorkRemotely: ✅ 100% remote
+• Monster: ✅ Remote filter
+• Dice: ✅ Remote filter
+• SimplyHired: ⚠️ Limited
+• ZipRecruiter: ✅ Remote filter
+• AngelList: ✅ Remote filter
+
+SALARY DATA:
+• Indeed: ✅ Often shown
+• LinkedIn: ⚠️ Sometimes
+• Glassdoor: ✅ Estimates
+• RemoteOK: ✅ Often shown
+• WeWorkRemotely: ⚠️ Rare
+• Monster: ⚠️ Sometimes
+• Dice: ✅ Often shown
+• SimplyHired: ✅ Estimates
+• ZipRecruiter: ⚠️ Sometimes
+• AngelList: ✅ Often + equity
+
+JOB TYPES:
+• All platforms support: Full-time, Part-time, Contract
+• Indeed, LinkedIn, Monster: Internships
+• AngelList: Startup equity options
+
+PERFORMANCE TIPS:
+=================
+
+FASTEST PLATFORMS (No Selenium):
+• RemoteOK
+• WeWorkRemotely
+
+MEDIUM SPEED (Selenium):
+• Indeed
+• Monster
+• Dice
+• SimplyHired
+• ZipRecruiter
+• AngelList
+
+SLOWER (Selenium + More Complex):
+• LinkedIn (infinite scroll)
+• Glassdoor (popups)
+
+RECOMMENDATION:
+Start with fast platforms for testing:
+python main.py -k "test" -p remoteok --max-pages 1
+
+Then expand to others:
+python main.py -k "real search" -p indeed dice monster ziprecruiter
+
+
+COMPLETE COMMAND EXAMPLES:
+==========================
+
+# Search everything
+python main.py -k "python developer" -r
+
+# Tech job hunt
+python main.py -k "software engineer" -p indeed dice angellist linkedin
+
+# Remote job hunt
+python main.py -k "developer" -r -p remoteok weworkremotely indeed
+
+# Startup jobs
+python main.py -k "growth hacker" -p angellist indeed
+
+# Traditional industries
+python main.py -k "accountant" -p monster indeed simplyhired
+
+# High salary tech
+python main.py -k "senior engineer" --min-salary 150000 -p dice linkedin angellist
+
+# Location-based
+python main.py -k "developer" -l "San Francisco" -p indeed linkedin ziprecruiter
+
+# Multiple exports
+python main.py -k "data scientist" -p dice indeed -o csv json excel
+
+
+OUTPUT:
+=======
+
+Each job includes:
+✓ Title
+✓ Company
+✓ Location
+✓ Remote status
+✓ Salary (when available)
+✓ Description
+✓ Direct URL
+✓ Platform source
+
+Results saved to: output/jobs_TIMESTAMP.csv
+
+
+TESTING NEW PLATFORMS:
+======================
+
+Test each new platform individually:
+
+python main.py -k "developer" -p monster --max-pages 1
+python main.py -k "developer" -p dice --max-pages 1
+python main.py -k "developer" -p simplyhired --max-pages 1
+python main.py -k "developer" -p ziprecruiter --max-pages 1
+python main.py -k "developer" -p angellist --max-pages 1
+
+
+TROUBLESHOOTING:
+================
+
+If a platform doesn't return results:
+1. Try broader keywords
+2. Remove location filter
+3. Increase --max-pages
+4. Platform may be blocking (try others)
+
+Some platforms have anti-scraping:
+• Use delays (already configured)
+• Use headless mode (already configured)
+• Rotate between platforms
+
+
+SUMMARY:
+========
+
+✅ 10 platforms total
+✅ 5 new platforms added (Monster, Dice, SimplyHired, ZipRecruiter, AngelList)
+✅ All registered in main.py
+✅ All support remote filtering
+✅ Mix of general, tech-focused, and startup platforms
+✅ Fast and slow options available
+✅ Ready to use immediately!
+
+START SCRAPING:
+===============
+
+python main.py --keywords "your dream job" --remote
+
+Results will include jobs from ALL 10 PLATFORMS! 🚀
+
+=================================================================

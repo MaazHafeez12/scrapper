@@ -1,0 +1,60 @@
+# Environment
+.env
+.env.*
+.venv/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyd
+
+# Output
+output/
+*.csv
+*.json
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Selenium
+*.log
+geckodriver.log
+chromedriver.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cloudflare tunnel binary
+cloudflared.exe
+
+# Build / packaging
+build/
+dist/
+lib/
+lib64/
+share/python-wheels/
+*.egg-info/
+*.egg
+
+# Tests / coverage
+.pytest_cache/
+.coverage*
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints/
