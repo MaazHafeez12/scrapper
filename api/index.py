@@ -145,6 +145,15 @@ except ImportError as e:
     CALENDAR_ENABLED = False
     CalendarIntegration = None
 
+# Import voice calling module
+try:
+    from voice_calling import VoiceCallingSystem
+    VOICE_CALLING_ENABLED = True
+except ImportError as e:
+    print(f"Voice calling module not available: {e}")
+    VOICE_CALLING_ENABLED = False
+    VoiceCallingSystem = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -162,6 +171,19 @@ if CALENDAR_ENABLED and db:
         calendar_integration = CalendarIntegration(db.connection)
     except Exception as e:
         print(f"Calendar integration initialization error: {e}")
+
+# Initialize voice calling system
+voice_calling = None
+if VOICE_CALLING_ENABLED and db:
+    try:
+        voice_calling = VoiceCallingSystem(
+            db.connection,
+            account_sid=os.getenv('TWILIO_ACCOUNT_SID'),
+            auth_token=os.getenv('TWILIO_AUTH_TOKEN'),
+            from_number=os.getenv('TWILIO_PHONE_NUMBER')
+        )
+    except Exception as e:
+        print(f"Voice calling initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -3580,6 +3602,156 @@ def get_calendar_analytics():
         user_id=data['user_id'],
         date_range=data['date_range']
     )
+    return jsonify({'success': True, 'analytics': analytics})
+
+# ===== VOICE CALLING SYSTEM ENDPOINTS =====
+
+@app.route('/api/voice/call', methods=['POST'])
+def make_voice_call():
+    """Make outbound call."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'to_number' not in data or 'call_type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: to_number, call_type'}), 400
+    
+    result = voice_calling.make_call(
+        to_number=data['to_number'],
+        call_type=data['call_type'],
+        campaign_id=data.get('campaign_id'),
+        script_id=data.get('script_id')
+    )
+    return jsonify(result)
+
+@app.route('/api/voice/bulk-call', methods=['POST'])
+def make_bulk_voice_calls():
+    """Make bulk outbound calls."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'contacts' not in data or 'campaign_id' not in data or 'script_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: contacts, campaign_id, script_id'}), 400
+    
+    result = voice_calling.make_bulk_calls(
+        contacts=data['contacts'],
+        campaign_id=data['campaign_id'],
+        script_id=data['script_id']
+    )
+    return jsonify(result)
+
+@app.route('/api/voice/voicemail-drop', methods=['POST'])
+def drop_voicemail():
+    """Drop pre-recorded voicemail."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'to_number' not in data or 'voicemail_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: to_number, voicemail_id'}), 400
+    
+    result = voice_calling.drop_voicemail(
+        to_number=data['to_number'],
+        voicemail_id=data['voicemail_id'],
+        campaign_id=data.get('campaign_id')
+    )
+    return jsonify(result)
+
+@app.route('/api/voice/call-status/<call_id>', methods=['PUT'])
+def update_voice_call_status(call_id):
+    """Update call status from webhook."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'status' not in data:
+        return jsonify({'success': False, 'error': 'Missing: status'}), 400
+    
+    result = voice_calling.update_call_status(
+        call_id=call_id,
+        status=data['status'],
+        details=data.get('details', {})
+    )
+    return jsonify(result)
+
+@app.route('/api/voice/recording/<call_id>', methods=['GET'])
+def get_voice_call_recording(call_id):
+    """Get call recording URL."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    result = voice_calling.get_call_recording(call_id)
+    return jsonify(result)
+
+@app.route('/api/voice/transcribe/<call_id>', methods=['POST'])
+def transcribe_voice_call(call_id):
+    """Transcribe call recording."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    result = voice_calling.transcribe_call(call_id)
+    return jsonify(result)
+
+@app.route('/api/voice/script', methods=['POST'])
+def create_voice_call_script():
+    """Create call script."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'content' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, content'}), 400
+    
+    result = voice_calling.create_call_script(data)
+    return jsonify(result)
+
+@app.route('/api/voice/voicemail', methods=['POST'])
+def create_voice_voicemail_drop():
+    """Create voicemail drop."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'recording_url' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, recording_url'}), 400
+    
+    result = voice_calling.create_voicemail_drop(data)
+    return jsonify(result)
+
+@app.route('/api/voice/campaign', methods=['POST'])
+def create_voice_campaign():
+    """Create voice calling campaign."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'target_contacts' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, target_contacts'}), 400
+    
+    result = voice_calling.create_voice_campaign(data)
+    return jsonify(result)
+
+@app.route('/api/voice/campaign-stats/<campaign_id>', methods=['GET'])
+def get_voice_campaign_stats(campaign_id):
+    """Get voice campaign statistics."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    result = voice_calling.get_campaign_stats(campaign_id)
+    return jsonify(result)
+
+@app.route('/api/voice/analytics', methods=['POST'])
+def get_voice_call_analytics():
+    """Get overall call analytics."""
+    if not VOICE_CALLING_ENABLED or not voice_calling:
+        return jsonify({'success': False, 'error': 'Voice calling not available'}), 503
+    
+    data = request.get_json()
+    if 'date_range' not in data:
+        return jsonify({'success': False, 'error': 'Missing: date_range'}), 400
+    
+    analytics = voice_calling.get_call_analytics(data['date_range'])
     return jsonify({'success': True, 'analytics': analytics})
 
 # WSGI entry point for Vercel
