@@ -56,6 +56,16 @@ except ImportError as e:
     EMAIL_AUTOMATION_ENABLED = False
     email_automation = None
 
+# Import analytics dashboard module
+try:
+    from analytics_dashboard import AnalyticsDashboard
+    analytics = AnalyticsDashboard()
+    ANALYTICS_ENABLED = True
+except ImportError as e:
+    print(f"Analytics dashboard module not available: {e}")
+    ANALYTICS_ENABLED = False
+    analytics = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -2165,6 +2175,178 @@ def track_email_reply():
     
     result = email_automation.mark_email_replied(data['email_id'])
     return jsonify(result)
+
+# ===== ANALYTICS DASHBOARD ENDPOINTS =====
+
+@app.route('/api/analytics/conversion/track', methods=['POST'])
+def track_conversion():
+    """Track conversion funnel event."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    data = request.get_json()
+    
+    if 'event_type' not in data or 'lead_id' not in data:
+        return jsonify({
+            'success': False,
+            'error': 'Missing required fields: event_type, lead_id'
+        }), 400
+    
+    result = analytics.track_conversion_event(
+        event_type=data['event_type'],
+        lead_id=data['lead_id'],
+        details=data.get('details', {})
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/analytics/conversion/funnel', methods=['GET'])
+def get_funnel():
+    """Get conversion funnel statistics."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    # Parse date parameters
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    from datetime import datetime
+    start_dt = datetime.fromisoformat(start_date) if start_date else None
+    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    
+    funnel = analytics.get_conversion_funnel(start_dt, end_dt)
+    
+    return jsonify({
+        'success': True,
+        'funnel': funnel
+    })
+
+@app.route('/api/analytics/cost/track', methods=['POST'])
+def track_cost():
+    """Track cost data."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    data = request.get_json()
+    
+    required = ['platform', 'amount', 'cost_type']
+    if not all(field in data for field in required):
+        return jsonify({
+            'success': False,
+            'error': f'Missing required fields: {required}'
+        }), 400
+    
+    result = analytics.track_cost(
+        platform=data['platform'],
+        amount=data['amount'],
+        cost_type=data['cost_type'],
+        description=data.get('description')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/analytics/revenue/track', methods=['POST'])
+def track_revenue():
+    """Track revenue data."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    data = request.get_json()
+    
+    required = ['lead_id', 'amount', 'platform']
+    if not all(field in data for field in required):
+        return jsonify({
+            'success': False,
+            'error': f'Missing required fields: {required}'
+        }), 400
+    
+    result = analytics.track_revenue(
+        lead_id=data['lead_id'],
+        amount=data['amount'],
+        platform=data['platform'],
+        description=data.get('description')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/analytics/roi', methods=['GET'])
+def get_roi_metrics():
+    """Get ROI metrics and calculations."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    # Parse date parameters
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    from datetime import datetime
+    start_dt = datetime.fromisoformat(start_date) if start_date else None
+    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    
+    roi = analytics.get_roi_metrics(start_dt, end_dt)
+    
+    return jsonify({
+        'success': True,
+        'roi_metrics': roi
+    })
+
+@app.route('/api/analytics/platforms', methods=['GET'])
+def get_platform_performance():
+    """Get platform performance comparison."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    # Parse date parameters
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    from datetime import datetime
+    start_dt = datetime.fromisoformat(start_date) if start_date else None
+    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    
+    performance = analytics.get_platform_performance(start_dt, end_dt)
+    
+    return jsonify({
+        'success': True,
+        'performance': performance
+    })
+
+@app.route('/api/analytics/timeseries', methods=['GET'])
+def get_timeseries():
+    """Get time-series analysis."""
+    if not ANALYTICS_ENABLED or not analytics:
+        return jsonify({
+            'success': False,
+            'error': 'Analytics not available'
+        }), 503
+    
+    granularity = request.args.get('granularity', 'daily')
+    days = int(request.args.get('days', 30))
+    
+    timeseries = analytics.get_time_series_analysis(granularity, days)
+    
+    return jsonify({
+        'success': True,
+        'timeseries': timeseries
+    })
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
