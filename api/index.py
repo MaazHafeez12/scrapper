@@ -217,6 +217,17 @@ except ImportError as e:
     DOCUMENTS_ENABLED = False
     DocumentManagement = None
 
+# Import caching layer
+try:
+    from caching_layer import CacheManager, CacheService, CacheInvalidationService
+    CACHE_ENABLED = True
+except ImportError as e:
+    print(f"Caching layer not available: {e}")
+    CACHE_ENABLED = False
+    CacheManager = None
+    CacheService = None
+    CacheInvalidationService = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -303,6 +314,18 @@ if DOCUMENTS_ENABLED and db:
         doc_manager = DocumentManagement(db.connection)
     except Exception as e:
         print(f"Document management initialization error: {e}")
+
+# Initialize caching layer
+cache_manager = None
+cache_service = None
+cache_invalidation = None
+if CACHE_ENABLED:
+    try:
+        cache_manager = CacheManager()
+        cache_service = CacheService(cache_manager)
+        cache_invalidation = CacheInvalidationService(cache_service)
+    except Exception as e:
+        print(f"Caching layer initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4745,6 +4768,83 @@ def get_document_analytics(owner_id):
     
     analytics = doc_manager.get_document_analytics(owner_id)
     return jsonify({'success': True, 'analytics': analytics})
+
+# ===== Caching Layer Endpoints =====
+
+@app.route('/api/cache/stats', methods=['GET'])
+def get_cache_stats():
+    if not CACHE_ENABLED or not cache_service:
+        return jsonify({'success': False, 'error': 'Cache not enabled'}), 503
+    
+    stats = cache_service.get_cache_stats()
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/api/cache/clear', methods=['POST'])
+def clear_cache():
+    if not CACHE_ENABLED or not cache_manager:
+        return jsonify({'success': False, 'error': 'Cache not enabled'}), 503
+    
+    data = request.get_json() or {}
+    pattern = data.get('pattern', '*')
+    
+    if pattern == '*':
+        cache_manager.clear()
+        return jsonify({'success': True, 'message': 'All cache cleared'})
+    else:
+        count = cache_manager.invalidate_pattern(pattern)
+        return jsonify({'success': True, 'cleared': count, 'pattern': pattern})
+
+@app.route('/api/cache/invalidate/user/<user_id>', methods=['POST'])
+def invalidate_user_cache(user_id):
+    if not CACHE_ENABLED or not cache_service:
+        return jsonify({'success': False, 'error': 'Cache not enabled'}), 503
+    
+    count = cache_service.invalidate_user_cache(user_id)
+    return jsonify({'success': True, 'cleared': count, 'user_id': user_id})
+
+@app.route('/api/cache/invalidate/analytics', methods=['POST'])
+def invalidate_analytics_cache():
+    if not CACHE_ENABLED or not cache_service:
+        return jsonify({'success': False, 'error': 'Cache not enabled'}), 503
+    
+    data = request.get_json() or {}
+    metric = data.get('metric')
+    
+    count = cache_service.invalidate_analytics(metric)
+    return jsonify({'success': True, 'cleared': count})
+
+@app.route('/api/cache/warm', methods=['POST'])
+def warm_cache():
+    if not CACHE_ENABLED or not cache_service:
+        return jsonify({'success': False, 'error': 'Cache not enabled'}), 503
+    
+    # Define data loaders for frequently accessed data
+    loaders = [
+        {
+            'key': 'analytics:dashboard',
+            'func': lambda: {'message': 'Dashboard data warmed'},
+            'ttl': 600
+        }
+    ]
+    
+    stats = cache_service.warm_cache(loaders)
+    return jsonify({'success': True, 'message': 'Cache warmed', 'stats': stats})
+
+@app.route('/api/cache/keys', methods=['GET'])
+def get_cache_keys():
+    if not CACHE_ENABLED or not cache_manager:
+        return jsonify({'success': False, 'error': 'Cache not enabled'}), 503
+    
+    pattern = request.args.get('pattern', '*')
+    keys = cache_manager.keys(pattern)
+    
+    # Get TTL info
+    keys_with_ttl = [
+        {'key': key, 'ttl': cache_manager.ttl_remaining(key)}
+        for key in keys
+    ]
+    
+    return jsonify({'success': True, 'keys': keys_with_ttl, 'count': len(keys)})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
