@@ -163,6 +163,15 @@ except ImportError as e:
     SOCIAL_MEDIA_ENABLED = False
     SocialMediaAutomation = None
 
+# Import security & compliance module
+try:
+    from security_compliance import SecurityCompliance
+    SECURITY_ENABLED = True
+except ImportError as e:
+    print(f"Security & compliance module not available: {e}")
+    SECURITY_ENABLED = False
+    SecurityCompliance = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -201,6 +210,14 @@ if SOCIAL_MEDIA_ENABLED and db:
         social_media = SocialMediaAutomation(db.connection)
     except Exception as e:
         print(f"Social media automation initialization error: {e}")
+
+# Initialize security & compliance
+security = None
+if SECURITY_ENABLED and db:
+    try:
+        security = SecurityCompliance(db.connection)
+    except Exception as e:
+        print(f"Security & compliance initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -3895,6 +3912,183 @@ def get_social_analytics():
         date_range=data['date_range']
     )
     return jsonify({'success': True, 'analytics': analytics})
+
+# ===== ADVANCED SECURITY & COMPLIANCE ENDPOINTS =====
+
+@app.route('/api/security/setup-2fa', methods=['POST'])
+def setup_two_factor_auth():
+    """Setup 2FA for user."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id'}), 400
+    
+    result = security.setup_2fa(
+        user_id=data['user_id'],
+        method=data.get('method', 'totp')
+    )
+    return jsonify(result)
+
+@app.route('/api/security/verify-2fa', methods=['POST'])
+def verify_two_factor_auth():
+    """Verify 2FA code."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'code' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, code'}), 400
+    
+    result = security.verify_2fa(
+        user_id=data['user_id'],
+        code=data['code']
+    )
+    return jsonify(result)
+
+@app.route('/api/security/audit-log', methods=['POST'])
+def create_audit_log():
+    """Log audit event."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'event_type' not in data or 'action' not in data:
+        return jsonify({'success': False, 'error': 'Missing: event_type, action'}), 400
+    
+    result = security.log_audit_event(data)
+    return jsonify(result)
+
+@app.route('/api/security/audit-logs', methods=['GET'])
+def get_audit_logs():
+    """Get audit logs."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    filters = {
+        'user_id': request.args.get('user_id'),
+        'event_type': request.args.get('event_type'),
+        'start_date': request.args.get('start_date'),
+        'end_date': request.args.get('end_date'),
+        'limit': int(request.args.get('limit', 100))
+    }
+    filters = {k: v for k, v in filters.items() if v is not None}
+    
+    logs = security.get_audit_logs(filters)
+    return jsonify({'success': True, 'logs': logs})
+
+@app.route('/api/security/role', methods=['POST'])
+def create_security_role():
+    """Create user role."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name'}), 400
+    
+    result = security.create_role(data)
+    return jsonify(result)
+
+@app.route('/api/security/assign-role', methods=['POST'])
+def assign_user_role():
+    """Assign role to user."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'role_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, role_id'}), 400
+    
+    result = security.assign_role(
+        user_id=data['user_id'],
+        role_id=data['role_id']
+    )
+    return jsonify(result)
+
+@app.route('/api/security/check-permission', methods=['POST'])
+def check_user_permission():
+    """Check user permission."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'permission' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, permission'}), 400
+    
+    has_permission = security.check_permission(
+        user_id=data['user_id'],
+        permission=data['permission']
+    )
+    return jsonify({'success': True, 'has_permission': has_permission})
+
+@app.route('/api/gdpr/export-data', methods=['POST'])
+def export_user_data():
+    """Export user data (GDPR)."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'data_types' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, data_types'}), 400
+    
+    result = security.export_data(
+        user_id=data['user_id'],
+        data_types=data['data_types']
+    )
+    return jsonify(result)
+
+@app.route('/api/gdpr/delete-data', methods=['POST'])
+def delete_user_data():
+    """Delete user data (GDPR)."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id'}), 400
+    
+    result = security.delete_user_data(
+        user_id=data['user_id'],
+        data_types=data.get('data_types')
+    )
+    return jsonify(result)
+
+@app.route('/api/compliance/report', methods=['POST'])
+def get_compliance_report():
+    """Get compliance report."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'date_range' not in data:
+        return jsonify({'success': False, 'error': 'Missing: date_range'}), 400
+    
+    report = security.get_compliance_report(data['date_range'])
+    return jsonify({'success': True, 'report': report})
+
+@app.route('/api/compliance/retention-policy', methods=['POST'])
+def set_retention_policy():
+    """Set data retention policy."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'data_type' not in data or 'retention_days' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, data_type, retention_days'}), 400
+    
+    result = security.set_data_retention_policy(data)
+    return jsonify(result)
+
+@app.route('/api/compliance/enforce-retention', methods=['POST'])
+def enforce_retention_policies():
+    """Enforce retention policies."""
+    if not SECURITY_ENABLED or not security:
+        return jsonify({'success': False, 'error': 'Security not available'}), 503
+    
+    result = security.enforce_retention_policies()
+    return jsonify(result)
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
