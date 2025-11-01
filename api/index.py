@@ -86,6 +86,16 @@ except ImportError as e:
     AI_ENABLED = False
     ai = None
 
+# Import follow-up engine module
+try:
+    from followup_engine import FollowUpEngine
+    followup_engine = FollowUpEngine()
+    FOLLOWUP_ENGINE_ENABLED = True
+except ImportError as e:
+    print(f"Follow-up engine module not available: {e}")
+    FOLLOWUP_ENGINE_ENABLED = False
+    followup_engine = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -2658,6 +2668,147 @@ def ai_features_status():
             'batch_analysis': 'Analyze multiple jobs efficiently'
         }
     })
+
+# ===== AUTOMATED FOLLOW-UP ENGINE ENDPOINTS =====
+
+@app.route('/api/followup/create-sequence', methods=['POST'])
+def create_followup_sequence():
+    """Create automated follow-up sequence."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    data = request.get_json()
+    required = ['lead_id', 'initial_email_id']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = followup_engine.create_follow_up_sequence(
+        lead_id=data['lead_id'],
+        initial_email_id=data['initial_email_id'],
+        rule_type=data.get('rule_type', 'no_response')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/followup/engagement', methods=['POST'])
+def update_followup_engagement():
+    """Update follow-up based on engagement."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    data = request.get_json()
+    required = ['lead_id', 'engagement_type']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = followup_engine.update_on_engagement(
+        lead_id=data['lead_id'],
+        engagement_type=data['engagement_type'],
+        sequence_id=data.get('sequence_id')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/followup/due', methods=['GET'])
+def get_due_followups():
+    """Get follow-ups due soon."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    hours_ahead = int(request.args.get('hours_ahead', 24))
+    result = followup_engine.get_due_followups(hours_ahead)
+    
+    return jsonify(result)
+
+@app.route('/api/followup/mark-sent/<followup_id>', methods=['POST'])
+def mark_followup_sent(followup_id):
+    """Mark follow-up as sent."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    result = followup_engine.mark_followup_sent(followup_id)
+    return jsonify(result)
+
+@app.route('/api/followup/cancel-sequence/<sequence_id>', methods=['POST'])
+def cancel_followup_sequence(sequence_id):
+    """Cancel follow-up sequence."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    data = request.get_json() or {}
+    result = followup_engine.cancel_sequence(
+        sequence_id=sequence_id,
+        reason=data.get('reason', 'Manual cancellation')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/followup/engagement-stats/<lead_id>', methods=['GET'])
+def get_engagement_stats(lead_id):
+    """Get engagement statistics for lead."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    result = followup_engine.get_engagement_stats(lead_id)
+    return jsonify(result)
+
+@app.route('/api/followup/optimize-timing', methods=['POST'])
+def optimize_followup_timing():
+    """ML-based timing optimization."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    data = request.get_json()
+    required = ['lead_data', 'historical_data']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = followup_engine.optimize_timing_ml(
+        lead_data=data['lead_data'],
+        historical_data=data['historical_data']
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/followup/sequences', methods=['GET'])
+def get_all_followup_sequences():
+    """Get all follow-up sequences."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    status = request.args.get('status')
+    result = followup_engine.get_all_sequences(status)
+    
+    return jsonify(result)
+
+@app.route('/api/followup/performance', methods=['GET'])
+def get_followup_performance():
+    """Get follow-up performance metrics."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    result = followup_engine.get_performance_metrics()
+    return jsonify(result)
+
+@app.route('/api/followup/custom-rule', methods=['POST'])
+def create_custom_followup_rule():
+    """Create custom follow-up rule."""
+    if not FOLLOWUP_ENGINE_ENABLED or not followup_engine:
+        return jsonify({'success': False, 'error': 'Follow-up engine not available'}), 503
+    
+    data = request.get_json()
+    required = ['rule_name', 'intervals', 'max_attempts']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = followup_engine.custom_rule(
+        rule_name=data['rule_name'],
+        intervals=data['intervals'],
+        max_attempts=data['max_attempts'],
+        stop_on_response=data.get('stop_on_response', True)
+    )
+    
+    return jsonify(result)
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
