@@ -1616,6 +1616,139 @@ def stats():
         'database_enabled': False
     })
 
+@app.route('/api/populate-sample-jobs', methods=['POST'])
+def populate_sample_jobs():
+    """Populate database with sample job postings for testing."""
+    global live_jobs
+    
+    sample_jobs = [
+        {
+            'title': 'Senior Python Developer',
+            'company': 'TechCorp Solutions',
+            'location': 'Remote',
+            'description': 'Looking for experienced Python developer with Django and FastAPI experience. Work on exciting projects with a global team.',
+            'platform': 'linkedin',
+            'url': 'https://linkedin.com/jobs/sample-1',
+            'salary': '$120k - $180k',
+            'posted_date': '2 days ago',
+            'lead_score': 85,
+            'company_size': '500-1000',
+            'industry': 'Technology'
+        },
+        {
+            'title': 'Full Stack Engineer',
+            'company': 'StartupHub Inc',
+            'location': 'San Francisco, CA (Hybrid)',
+            'description': 'Join our fast-growing startup! React, Node.js, MongoDB. Competitive salary and equity.',
+            'platform': 'wellfound',
+            'url': 'https://wellfound.com/jobs/sample-2',
+            'salary': '$100k - $150k + equity',
+            'posted_date': '1 day ago',
+            'lead_score': 78,
+            'company_size': '50-100',
+            'industry': 'SaaS'
+        },
+        {
+            'title': 'DevOps Engineer',
+            'company': 'CloudNative Systems',
+            'location': 'Remote (US)',
+            'description': 'AWS, Kubernetes, Terraform expert needed. Help us scale our infrastructure.',
+            'platform': 'remoteok',
+            'url': 'https://remoteok.com/jobs/sample-3',
+            'salary': '$130k - $170k',
+            'posted_date': '3 hours ago',
+            'lead_score': 92,
+            'company_size': '200-500',
+            'industry': 'Cloud Services'
+        },
+        {
+            'title': 'Data Scientist',
+            'company': 'AI Analytics Co',
+            'location': 'New York, NY',
+            'description': 'Machine learning, Python, TensorFlow. Work on cutting-edge AI projects.',
+            'platform': 'indeed',
+            'url': 'https://indeed.com/jobs/sample-4',
+            'salary': '$140k - $200k',
+            'posted_date': '5 days ago',
+            'lead_score': 88,
+            'company_size': '1000+',
+            'industry': 'Artificial Intelligence'
+        },
+        {
+            'title': 'Frontend Developer',
+            'company': 'DesignFirst Studios',
+            'location': 'Remote',
+            'description': 'React, TypeScript, Next.js. Build beautiful user interfaces.',
+            'platform': 'weworkremotely',
+            'url': 'https://weworkremotely.com/jobs/sample-5',
+            'salary': '$90k - $130k',
+            'posted_date': '1 week ago',
+            'lead_score': 72,
+            'company_size': '10-50',
+            'industry': 'Design'
+        },
+        {
+            'title': 'Backend Engineer',
+            'company': 'FinTech Innovations',
+            'location': 'London, UK (Remote)',
+            'description': 'Node.js, PostgreSQL, microservices. Build scalable financial systems.',
+            'platform': 'nodesk',
+            'url': 'https://nodesk.co/jobs/sample-6',
+            'salary': '£80k - £120k',
+            'posted_date': '4 days ago',
+            'lead_score': 81,
+            'company_size': '100-200',
+            'industry': 'FinTech'
+        },
+        {
+            'title': 'Mobile App Developer',
+            'company': 'AppMasters Ltd',
+            'location': 'Austin, TX',
+            'description': 'React Native or Flutter. iOS and Android development.',
+            'platform': 'glassdoor',
+            'url': 'https://glassdoor.com/jobs/sample-7',
+            'salary': '$110k - $160k',
+            'posted_date': '2 weeks ago',
+            'lead_score': 75,
+            'company_size': '50-100',
+            'industry': 'Mobile Apps'
+        },
+        {
+            'title': 'Software Architect',
+            'company': 'Enterprise Solutions Group',
+            'location': 'Remote (Global)',
+            'description': 'Lead technical architecture for enterprise applications. 10+ years experience.',
+            'platform': 'linkedin',
+            'url': 'https://linkedin.com/jobs/sample-8',
+            'salary': '$180k - $250k',
+            'posted_date': '1 day ago',
+            'lead_score': 95,
+            'company_size': '1000+',
+            'industry': 'Enterprise Software'
+        }
+    ]
+    
+    # Add to in-memory storage
+    live_jobs.clear()
+    live_jobs.extend(sample_jobs)
+    
+    # Try to add to database if available
+    saved_count = 0
+    if db and hasattr(db, 'add_job'):
+        for job in sample_jobs:
+            try:
+                db.add_job(job)
+                saved_count += 1
+            except Exception as e:
+                print(f"Error saving job to database: {e}")
+    
+    return jsonify({
+        'success': True,
+        'message': f'Added {len(sample_jobs)} sample jobs',
+        'jobs_in_memory': len(live_jobs),
+        'jobs_in_database': saved_count
+    })
+
 @app.route('/health')
 def health():
     """Health check endpoint."""
