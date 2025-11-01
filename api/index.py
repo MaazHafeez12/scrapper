@@ -208,6 +208,15 @@ except ImportError as e:
     REVENUE_ENABLED = False
     RevenueIntelligence = None
 
+# Import document management module
+try:
+    from document_management import DocumentManagement
+    DOCUMENTS_ENABLED = True
+except ImportError as e:
+    print(f"Document management module not available: {e}")
+    DOCUMENTS_ENABLED = False
+    DocumentManagement = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -286,6 +295,14 @@ if REVENUE_ENABLED and db:
         revenue_intel = RevenueIntelligence(db.connection)
     except Exception as e:
         print(f"Revenue intelligence initialization error: {e}")
+
+# Initialize document management
+doc_manager = None
+if DOCUMENTS_ENABLED and db:
+    try:
+        doc_manager = DocumentManagement(db.connection)
+    except Exception as e:
+        print(f"Document management initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4615,6 +4632,118 @@ def get_revenue_analytics():
         return jsonify({'success': False, 'error': 'Missing: date_range'}), 400
     
     analytics = revenue_intel.get_revenue_analytics(data['date_range'])
+    return jsonify({'success': True, 'analytics': analytics})
+
+# ===== Document Management & E-Signatures Endpoints =====
+
+@app.route('/api/documents/create', methods=['POST'])
+def create_document():
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['name', 'owner_id']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    result = doc_manager.create_document(data)
+    return jsonify(result)
+
+@app.route('/api/documents/<document_id>', methods=['PUT'])
+def update_document(document_id):
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    result = doc_manager.update_document(document_id, data)
+    return jsonify(result)
+
+@app.route('/api/documents/templates/create', methods=['POST'])
+def create_template():
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['name', 'content']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    result = doc_manager.create_template(data)
+    return jsonify(result)
+
+@app.route('/api/documents/templates/<template_id>/use', methods=['POST'])
+def use_template(template_id):
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    if 'variables' not in data or 'owner_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: variables, owner_id'}), 400
+    
+    result = doc_manager.use_template(template_id, data['variables'], data['owner_id'])
+    return jsonify(result)
+
+@app.route('/api/documents/signatures/request', methods=['POST'])
+def request_signature():
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['document_id', 'requester_id', 'signers']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    result = doc_manager.request_signature(data)
+    return jsonify(result)
+
+@app.route('/api/documents/signatures/sign', methods=['POST'])
+def add_signature():
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['document_id', 'signer_id', 'signer_name', 'signer_email']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    result = doc_manager.add_signature(data)
+    return jsonify(result)
+
+@app.route('/api/documents/signatures/<request_id>/status', methods=['GET'])
+def get_signature_status(request_id):
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    result = doc_manager.get_signature_status(request_id)
+    return jsonify(result)
+
+@app.route('/api/documents/<document_id>/history', methods=['GET'])
+def get_document_history(document_id):
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    history = doc_manager.get_document_history(document_id)
+    return jsonify({'success': True, 'history': history})
+
+@app.route('/api/documents/share', methods=['POST'])
+def share_document():
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['document_id', 'shared_by', 'shared_with']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    result = doc_manager.share_document(data)
+    return jsonify(result)
+
+@app.route('/api/documents/analytics/<owner_id>', methods=['GET'])
+def get_document_analytics(owner_id):
+    if not DOCUMENTS_ENABLED or not doc_manager:
+        return jsonify({'success': False, 'error': 'Documents not enabled'}), 503
+    
+    analytics = doc_manager.get_document_analytics(owner_id)
     return jsonify({'success': True, 'analytics': analytics})
 
 # WSGI entry point for Vercel
