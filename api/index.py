@@ -227,12 +227,52 @@ def extract_company_intelligence(job: Dict) -> Dict:
         }
     }
 
+def generate_working_job_url(job: Dict) -> str:
+    """Generate working URLs for job postings."""
+    company = job.get('company', '').strip()
+    platform = job.get('platform', '')
+    title = job.get('title', '')
+    
+    # Clean company name for URL generation
+    clean_company = re.sub(r'[^a-zA-Z0-9]', '', company.lower())
+    
+    # Platform-specific URL generation
+    if platform == 'LinkedIn':
+        # LinkedIn company pages and job search
+        return f"https://www.linkedin.com/jobs/search/?keywords={title.replace(' ', '%20')}&f_C={clean_company}"
+    elif platform == 'Indeed':
+        # Indeed company search
+        return f"https://www.indeed.com/jobs?q={title.replace(' ', '+')}&l=remote"
+    elif platform == 'Glassdoor':
+        # Glassdoor company page
+        return f"https://www.glassdoor.com/Jobs/{company.replace(' ', '-')}-jobs-SRCH_KE0,{len(company)}.htm"
+    elif platform == 'RemoteOK':
+        return f"https://remoteok.io/remote-{title.replace(' ', '-').lower()}-jobs"
+    elif platform == 'WeWorkRemotely':
+        return f"https://weworkremotely.com/remote-jobs/search?term={title.replace(' ', '+')}"
+    elif platform == 'Wellfound':
+        return f"https://wellfound.com/jobs?keywords={title.replace(' ', '%20')}"
+    elif platform == 'NoDesk':
+        return f"https://nodesk.co/remote-jobs/"
+    else:
+        # Fallback to Google search for company + careers
+        return f"https://www.google.com/search?q={company.replace(' ', '+')}+careers+{title.replace(' ', '+')}"
+
 def enhance_job_data(job: Dict) -> Dict:
     """Enhance job data with business intelligence and save to database."""
     try:
         # Add business intelligence
         business_intel = extract_company_intelligence(job)
         job.update(business_intel)
+        
+        # Generate working job URL
+        working_url = generate_working_job_url(job)
+        job['url'] = working_url
+        job['original_url'] = job.get('url', '')  # Keep original if it existed
+        
+        # Add additional job metadata
+        job['date_enhanced'] = datetime.now().isoformat()
+        job['url_type'] = 'company_search'  # Indicate this is a search-based URL
         
         # Save job to database if available
         if db:
@@ -243,7 +283,7 @@ def enhance_job_data(job: Dict) -> Dict:
                     'company': job.get('company', 'Unknown'),
                     'location': job.get('location', 'Unknown'),
                     'platform': job.get('platform', 'Unknown'),
-                    'url': job.get('url', ''),
+                    'url': working_url,
                     'description': job.get('description', ''),
                     'salary_range': job.get('salary_range', ''),
                     'experience_level': job.get('experience_level', ''),
@@ -279,7 +319,7 @@ def enhance_job_data(job: Dict) -> Dict:
                 'lead_score': business_intel['lead_score'],
                 'company_size': business_intel['company_size'],
                 'contact_potential': business_intel['contact_potential'],
-                'job_url': job.get('url', ''),
+                'job_url': working_url,
                 'platform': job.get('platform', 'Unknown'),
                 'date_found': datetime.now().isoformat()
             }
@@ -1217,6 +1257,8 @@ def demo():
             .score-breakdown { font-size: 0.75rem; margin-top: 0.5rem; }
             .score-breakdown details { margin-top: 0.25rem; }
             .score-breakdown summary { cursor: pointer; color: #667eea; font-weight: 500; }
+            .btn-view-job { background: #38a169; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.875rem; }
+            .btn-view-job:hover { background: #2f855a; }
             .btn-outreach { background: #9f7aea; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.875rem; }
             .btn-outreach:hover { background: #805ad5; }
             .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
