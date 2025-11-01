@@ -376,8 +376,11 @@
             const salary = job.salary_range || job.salary || '';
             const tags = job.tags || [];
             
+            // Don't escape URL - keep it as-is for href attribute
+            const safeUrl = url;
+            
             return `
-                <div class="job-card">
+                <div class="job-card" onclick="window.open('${safeUrl}', '_blank')">
                     <div class="job-header">
                         <div class="job-title">${escapeHtml(title)}</div>
                         <div class="job-company">${escapeHtml(company)}</div>
@@ -399,11 +402,11 @@
                     
                     <div class="job-actions">
                         ${url && url !== '#' ? `
-                            <a href="${escapeHtml(url)}" target="_blank" class="btn-action btn-view">
+                            <a href="${safeUrl}" target="_blank" class="btn-action btn-view" onclick="event.stopPropagation()">
                                 👁️ View Job
                             </a>
                         ` : ''}
-                        <a href="${escapeHtml(url)}" target="_blank" class="btn-action btn-apply">
+                        <a href="${safeUrl}" target="_blank" class="btn-action btn-apply" onclick="event.stopPropagation()">
                             ✉️ Apply Now
                         </a>
                     </div>
