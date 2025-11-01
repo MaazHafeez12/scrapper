@@ -238,6 +238,18 @@ except ImportError as e:
     RateLimiter = None
     RateLimitService = None
 
+# Import database optimization
+try:
+    from database_optimization import DatabaseOptimizer, QueryPerformanceMonitor, OptimizedQueryBuilder, DatabaseMaintenanceService
+    DB_OPTIMIZATION_ENABLED = True
+except ImportError as e:
+    print(f"Database optimization not available: {e}")
+    DB_OPTIMIZATION_ENABLED = False
+    DatabaseOptimizer = None
+    QueryPerformanceMonitor = None
+    OptimizedQueryBuilder = None
+    DatabaseMaintenanceService = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -346,6 +358,20 @@ if RATE_LIMIT_ENABLED:
         rate_limit_service = RateLimitService(rate_limiter)
     except Exception as e:
         print(f"Rate limiting initialization error: {e}")
+
+# Initialize database optimization
+db_optimizer = None
+query_monitor = None
+db_maintenance = None
+if DB_OPTIMIZATION_ENABLED and db:
+    try:
+        db_optimizer = DatabaseOptimizer(db.connection)
+        query_monitor = QueryPerformanceMonitor()
+        db_maintenance = DatabaseMaintenanceService(db_optimizer)
+        # Create indexes on startup
+        db_optimizer.create_indexes()
+    except Exception as e:
+        print(f"Database optimization initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4941,6 +4967,92 @@ def cleanup_rate_limits():
     
     count = rate_limiter.cleanup_old_buckets(max_age)
     return jsonify({'success': True, 'cleaned': count, 'max_age': max_age})
+
+# ===== Database Optimization Endpoints =====
+
+@app.route('/api/db/optimize/indexes', methods=['POST'])
+def create_database_indexes():
+    if not DB_OPTIMIZATION_ENABLED or not db_optimizer:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    count = db_optimizer.create_indexes()
+    return jsonify({'success': True, 'message': f'Created/verified {count} indexes'})
+
+@app.route('/api/db/optimize/analyze', methods=['POST'])
+def analyze_database():
+    if not DB_OPTIMIZATION_ENABLED or not db_optimizer:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    count = db_optimizer.analyze_tables()
+    return jsonify({'success': True, 'message': f'Analyzed {count} tables'})
+
+@app.route('/api/db/optimize/vacuum', methods=['POST'])
+def vacuum_database():
+    if not DB_OPTIMIZATION_ENABLED or not db_optimizer:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    db_optimizer.vacuum_database()
+    return jsonify({'success': True, 'message': 'Database vacuumed successfully'})
+
+@app.route('/api/db/stats/tables', methods=['GET'])
+def get_table_statistics():
+    if not DB_OPTIMIZATION_ENABLED or not db_optimizer:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    stats = db_optimizer.get_table_stats()
+    return jsonify({'success': True, 'tables': stats})
+
+@app.route('/api/db/stats/indexes', methods=['GET'])
+def get_index_statistics():
+    if not DB_OPTIMIZATION_ENABLED or not db_optimizer:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    indexes = db_optimizer.get_index_stats()
+    return jsonify({'success': True, 'indexes': indexes, 'count': len(indexes)})
+
+@app.route('/api/db/query/analyze', methods=['POST'])
+def analyze_query():
+    if not DB_OPTIMIZATION_ENABLED or not db_optimizer:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    data = request.get_json()
+    if 'query' not in data:
+        return jsonify({'success': False, 'error': 'Missing: query'}), 400
+    
+    result = db_optimizer.optimize_query(data['query'])
+    return jsonify({'success': True, 'analysis': result})
+
+@app.route('/api/db/query/stats', methods=['GET'])
+def get_query_statistics():
+    if not DB_OPTIMIZATION_ENABLED or not query_monitor:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    stats = query_monitor.get_query_stats()
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/api/db/query/slow', methods=['GET'])
+def get_slow_queries():
+    if not DB_OPTIMIZATION_ENABLED or not query_monitor:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    slow_queries = query_monitor.get_slow_queries()
+    return jsonify({'success': True, 'slow_queries': slow_queries, 'count': len(slow_queries)})
+
+@app.route('/api/db/maintenance/run', methods=['POST'])
+def run_database_maintenance():
+    if not DB_OPTIMIZATION_ENABLED or not db_maintenance:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    results = db_maintenance.run_maintenance()
+    return jsonify({'success': True, 'maintenance': results})
+
+@app.route('/api/db/maintenance/history', methods=['GET'])
+def get_maintenance_history():
+    if not DB_OPTIMIZATION_ENABLED or not db_maintenance:
+        return jsonify({'success': False, 'error': 'DB optimization not enabled'}), 503
+    
+    history = db_maintenance.get_maintenance_history()
+    return jsonify({'success': True, 'history': history, 'count': len(history)})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
