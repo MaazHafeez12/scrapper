@@ -39,38 +39,174 @@ business_leads = []
 
 # Simplified Business Intelligence Functions
 def extract_company_intelligence(job: Dict) -> Dict:
-    """Extract simplified business intelligence from job posting."""
+    """Extract enhanced business intelligence from job posting with advanced scoring."""
     company = job.get('company', '').strip()
     title = job.get('title', '').strip()
     description = job.get('description', '').strip()
+    location = job.get('location', '').strip()
+    platform = job.get('platform', '').strip()
     
-    # Simple company size detection
+    # Initialize scoring components
+    base_score = 0
+    scoring_details = {}
+    
+    # Enhanced company size detection with growth indicators
     company_size = "Unknown"
+    company_score = 0
     desc_lower = description.lower()
-    if any(word in desc_lower for word in ['startup', 'small team', 'growing company']):
+    company_lower = company.lower()
+    
+    # Company size scoring
+    if any(word in desc_lower for word in ['startup', 'small team', 'growing company', 'early stage']):
         company_size = "Startup"
-    elif any(word in desc_lower for word in ['enterprise', 'large company', 'fortune', 'global']):
+        company_score = 25  # High potential for new services
+        scoring_details['company_size_reason'] = "Startup - high growth potential"
+    elif any(word in desc_lower for word in ['enterprise', 'large company', 'fortune', 'global', 'multinational']):
         company_size = "Enterprise"
-    else:
+        company_score = 15  # Established but harder to reach
+        scoring_details['company_size_reason'] = "Enterprise - established market"
+    elif any(word in desc_lower for word in ['mid-size', 'medium company', 'scale', 'scaling']):
         company_size = "Mid-size"
+        company_score = 20  # Good balance
+        scoring_details['company_size_reason'] = "Mid-size - good opportunity balance"
+    else:
+        company_size = "Unknown"
+        company_score = 10
+        scoring_details['company_size_reason'] = "Unknown size"
     
-    # Simple tech extraction
-    tech_keywords = ['python', 'javascript', 'react', 'node', 'aws', 'docker', 'kubernetes', 'typescript', 'vue', 'angular']
-    technologies = [tech for tech in tech_keywords if tech in desc_lower]
+    # Technology stack complexity scoring
+    tech_keywords = [
+        ('python', 8), ('javascript', 6), ('react', 7), ('node', 6), ('typescript', 8),
+        ('aws', 10), ('azure', 10), ('gcp', 10), ('docker', 9), ('kubernetes', 12),
+        ('microservices', 15), ('api', 5), ('graphql', 8), ('mongodb', 6), ('postgresql', 7),
+        ('redis', 8), ('elasticsearch', 10), ('kafka', 12), ('spark', 12), ('tensorflow', 15),
+        ('machine learning', 18), ('ai', 15), ('blockchain', 20), ('devops', 10), ('cicd', 8)
+    ]
     
-    # Simple lead scoring
-    lead_score = len(technologies) * 15 + (30 if 'remote' in desc_lower else 0)
-    if company_size == "Startup":
-        lead_score += 20
-    elif company_size == "Enterprise":
-        lead_score += 10
+    technologies = []
+    tech_score = 0
+    
+    for tech, score in tech_keywords:
+        if tech in desc_lower or tech in title.lower():
+            technologies.append(tech)
+            tech_score += score
+    
+    # Cap technology score at 50
+    tech_score = min(tech_score, 50)
+    scoring_details['technology_score'] = tech_score
+    scoring_details['technologies_found'] = technologies
+    
+    # Market timing and urgency indicators
+    urgency_score = 0
+    urgency_indicators = [
+        ('urgent', 15), ('immediate', 12), ('asap', 10), ('quickly', 8),
+        ('fast-paced', 8), ('rapid', 8), ('growing team', 10), ('expanding', 12),
+        ('hiring now', 15), ('immediate start', 15), ('new position', 8)
+    ]
+    
+    for indicator, score in urgency_indicators:
+        if indicator in desc_lower:
+            urgency_score += score
+    
+    urgency_score = min(urgency_score, 25)  # Cap at 25
+    scoring_details['urgency_score'] = urgency_score
+    
+    # Platform credibility scoring
+    platform_scores = {
+        'LinkedIn': 15,    # High credibility
+        'Indeed': 10,      # Good volume
+        'Glassdoor': 12,   # Company insights
+        'RemoteOK': 8,     # Tech-focused
+        'WeWorkRemotely': 8,
+        'Wellfound': 12,   # Startup focus
+        'NoDesk': 6
+    }
+    platform_score = platform_scores.get(platform, 5)
+    scoring_details['platform_score'] = platform_score
+    
+    # Geographic and remote work scoring
+    location_score = 0
+    if 'remote' in location.lower() or 'remote' in desc_lower:
+        location_score = 15  # Remote-first companies often use tech services
+        scoring_details['location_advantage'] = "Remote-first culture"
+    elif any(city in location.lower() for city in ['san francisco', 'sf', 'silicon valley', 'seattle', 'new york', 'austin', 'boston']):
+        location_score = 12  # Tech hubs
+        scoring_details['location_advantage'] = "Tech hub location"
+    else:
+        location_score = 5
+        scoring_details['location_advantage'] = "Standard location"
+    
+    # Industry and domain scoring
+    industry_score = 0
+    high_value_industries = [
+        ('fintech', 15), ('healthtech', 15), ('edtech', 12), ('blockchain', 18),
+        ('ai', 18), ('ml', 18), ('saas', 15), ('cloud', 12), ('cybersecurity', 15),
+        ('data', 10), ('analytics', 12), ('automation', 12)
+    ]
+    
+    for industry, score in high_value_industries:
+        if industry in desc_lower or industry in company_lower:
+            industry_score = max(industry_score, score)  # Take highest match
+    
+    scoring_details['industry_score'] = industry_score
+    
+    # Job seniority and decision-making power indicators
+    seniority_score = 0
+    if any(level in title.lower() for level in ['senior', 'lead', 'principal', 'architect', 'manager', 'director']):
+        seniority_score = 8  # Higher-level roles suggest budget authority
+        scoring_details['seniority_bonus'] = "Senior-level position"
+    elif any(level in title.lower() for level in ['junior', 'entry', 'intern']):
+        seniority_score = 2
+        scoring_details['seniority_bonus'] = "Entry-level position"
+    else:
+        seniority_score = 5
+        scoring_details['seniority_bonus'] = "Mid-level position"
+    
+    # Calculate final lead score
+    final_score = (
+        company_score +      # 25 max
+        tech_score +         # 50 max  
+        urgency_score +      # 25 max
+        platform_score +     # 15 max
+        location_score +     # 15 max
+        industry_score +     # 18 max
+        seniority_score      # 8 max
+    )
+    
+    # Ensure score is between 0-100
+    final_score = min(max(final_score, 0), 100)
+    
+    # Determine contact potential based on score
+    if final_score >= 75:
+        contact_potential = 'Excellent'
+    elif final_score >= 60:
+        contact_potential = 'High'
+    elif final_score >= 40:
+        contact_potential = 'Medium'
+    elif final_score >= 25:
+        contact_potential = 'Low'
+    else:
+        contact_potential = 'Very Low'
+    
+    # Create tech stack summary
+    tech_stack = ', '.join(technologies[:5]) if technologies else 'General'
     
     return {
         'company_size': company_size,
         'technologies': technologies,
-        'lead_score': min(lead_score, 100),
-        'tech_stack': ', '.join(technologies[:3]) if technologies else 'General',
-        'contact_potential': 'High' if lead_score >= 70 else 'Medium' if lead_score >= 40 else 'Low'
+        'lead_score': final_score,
+        'tech_stack': tech_stack,
+        'contact_potential': contact_potential,
+        'scoring_breakdown': scoring_details,
+        'score_components': {
+            'company_size': company_score,
+            'technology_stack': tech_score,
+            'market_urgency': urgency_score,
+            'platform_credibility': platform_score,
+            'location_advantage': location_score,
+            'industry_value': industry_score,
+            'seniority_level': seniority_score
+        }
     }
 
 def enhance_job_data(job: Dict) -> Dict:
@@ -817,6 +953,39 @@ def business_leads_endpoint():
         'database_enabled': False
     })
 
+@app.route('/api/lead-analysis/<company>')
+def lead_analysis(company):
+    """Get detailed lead analysis and scoring breakdown."""
+    # Try to get lead from database first
+    if db and hasattr(db, 'get_business_leads'):
+        try:
+            leads = db.get_business_leads(limit=1000)
+            matching_lead = next((lead for lead in leads if lead.get('company', '').lower() == company.lower()), None)
+            
+            if matching_lead:
+                return jsonify({
+                    'success': True,
+                    'lead': matching_lead,
+                    'analysis_available': True
+                })
+        except Exception as e:
+            print(f"Error getting lead analysis from database: {e}")
+    
+    # Fallback to in-memory search
+    matching_lead = next((lead for lead in business_leads if lead.get('company', '').lower() == company.lower()), None)
+    
+    if matching_lead:
+        return jsonify({
+            'success': True,
+            'lead': matching_lead,
+            'analysis_available': False
+        })
+    
+    return jsonify({
+        'success': False,
+        'message': 'Lead not found'
+    })
+
 @app.route('/api/stats')
 def stats():
     """Get dashboard statistics with database integration."""
@@ -900,6 +1069,10 @@ def demo():
             .score-low { background: #e2e8f0; color: #4a5568; }
             .status { margin-top: 1rem; padding: 1rem; background: #f7fafc; border-radius: 8px; text-align: center; }
             .hidden { display: none; }
+            .score-excellent { background: #9ae6b4; color: #1a202c; }
+            .score-breakdown { font-size: 0.75rem; margin-top: 0.5rem; }
+            .score-breakdown details { margin-top: 0.25rem; }
+            .score-breakdown summary { cursor: pointer; color: #667eea; font-weight: 500; }
         </style>
     </head>
     <body>
@@ -1098,6 +1271,7 @@ def demo():
             }
 
             function getScoreClass(score) {
+                if (score >= 85) return 'score-excellent';
                 if (score >= 70) return 'score-high';
                 if (score >= 40) return 'score-medium';
                 return 'score-low';
