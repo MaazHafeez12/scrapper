@@ -183,7 +183,6 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
                 'company': company,
                 'location': 'Remote',
                 'platform': 'RemoteOK',
-                'url': 'https://remoteok.io/remote-jobs',
                 'description': f'{role} position with modern tech stack at {company}',
                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
                 'id': i + 1,
@@ -275,7 +274,6 @@ def scrape_indeed_live(keywords: str, limit: int = 20) -> List[Dict]:
                 'company': company,
                 'location': random.choice(['Remote', 'San Francisco, CA', 'New York, NY', 'Austin, TX']),
                 'platform': 'Indeed',
-                'url': 'https://www.indeed.com/jobs',
                 'description': f'{role} with competitive benefits at {company}',
                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
                 'id': i + 1,
@@ -594,7 +592,6 @@ def scrape_linkedin_live(keywords: str, limit: int = 30) -> List[Dict]:
             'company': company,
             'location': location,
             'platform': 'LinkedIn',
-            'url': f'https://linkedin.com/jobs/view/{random.randint(1000000, 9999999)}',
             'description': f'{role} at {company}. Technologies: {", ".join(random.sample(tech_stacks, 3))}. Benefits: {", ".join(random.sample(benefits, 2))}.',
             'date_posted': datetime.now().strftime('%Y-%m-%d'),
             'id': len(jobs) + 1,
@@ -893,9 +890,7 @@ def demo():
                     
                     container.innerHTML = jobs.map(job => `
                         <div class="job-card">
-                            <div class="job-title">
-                                ${job.url ? `<a href="${job.url}" target="_blank" class="job-url">${job.title}</a>` : job.title}
-                            </div>
+                            <div class="job-title">${job.title}</div>
                             <div class="job-company">${job.company}</div>
                             <div class="job-meta">
                                 <span class="meta-item">📍 ${job.location}</span>
@@ -908,9 +903,9 @@ def demo():
                             <div class="meta-item">🛠️ ${job.tech_stack || 'General'}</div>
                             ${job.salary_range ? `<div class="meta-item">💰 ${job.salary_range}</div>` : ''}
                             <div class="job-actions">
-                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn-apply">🚀 Apply Now</a>` : ''}
-                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn-view">👁️ View Job</a>` : ''}
-                                <button class="btn-contact" onclick="contactCompany('${job.company}', '${job.title}')">📧 Contact Company</button>
+                                <button class="btn-view" onclick="researchCompany('${job.company}', '${job.title}')">� Research Company</button>
+                                <button class="btn-contact" onclick="contactCompany('${job.company}', '${job.title}')">� Get Contact Info</button>
+                                <button class="btn-apply" onclick="saveAsLead('${job.company}', '${job.title}', ${job.lead_score})">⭐ Save Lead</button>
                             </div>
                         </div>
                     `).join('');
@@ -938,9 +933,7 @@ def demo():
                         </div>
                         ${data.leads.slice(-10).map(lead => `
                             <div class="job-card">
-                                <div class="job-title">
-                                    ${lead.job_url ? `<a href="${lead.job_url}" target="_blank" class="job-url">${lead.title}</a>` : lead.title}
-                                </div>
+                                <div class="job-title">${lead.title}</div>
                                 <div class="job-company">🏢 ${lead.company}</div>
                                 <div class="job-meta">
                                     <span class="meta-item">📍 ${lead.location}</span>
@@ -951,7 +944,7 @@ def demo():
                                 </div>
                                 <div class="meta-item">🛠️ ${lead.technologies.join(', ') || 'General Tech'}</div>
                                 <div class="job-actions">
-                                    ${lead.job_url ? `<a href="${lead.job_url}" target="_blank" class="btn-view">👁️ View Job</a>` : ''}
+                                    <button class="btn-view" onclick="researchCompany('${lead.company}', '${lead.title}')">� Research Company</button>
                                     <button class="btn-contact" onclick="contactCompany('${lead.company}', '${lead.title}')">📧 Business Contact</button>
                                     <button class="btn-apply" onclick="saveAsLead('${lead.company}', '${lead.title}', ${lead.lead_score})">⭐ Save Lead</button>
                                 </div>
@@ -970,38 +963,109 @@ def demo():
             }
 
             // Business development functions
+            function researchCompany(company, jobTitle) {
+                const researchSteps = `🔍 COMPANY RESEARCH: ${company}
+
+QUICK RESEARCH CHECKLIST:
+✅ Company Website: Search "${company} official website"
+✅ LinkedIn Page: Search "${company}" on LinkedIn
+✅ Recent News: Google "${company} news 2024"
+✅ Funding/Growth: Check "${company} funding" or "Series A/B"
+✅ Tech Stack: Look for "${company} technology stack" or engineering blog
+✅ Hiring Scale: Count recent job postings on their careers page
+
+BUSINESS OPPORTUNITY ASSESSMENT:
+• Position: ${jobTitle}
+• Why they're a lead: Actively hiring for tech roles
+• Your angle: They need tech talent = potential for your services
+• Best approach: Offer to augment their ${jobTitle} search
+
+NEXT STEPS:
+1. Visit their company website
+2. Find their "Careers" or "About" page
+3. Look for contact information or leadership team
+4. Check their LinkedIn company page for employees
+5. Identify decision makers (CTO, Head of Engineering, HR)`;
+
+                // Copy research plan to clipboard
+                navigator.clipboard.writeText(researchSteps).then(() => {
+                    alert(`🔍 Research plan for ${company} copied to clipboard!
+                    
+The research checklist will help you:
+• Understand their business model
+• Identify key decision makers  
+• Find the best contact approach
+• Position your services effectively
+
+Start with their website and LinkedIn page.`);
+                }).catch(() => {
+                    alert(`Research ${company} for ${jobTitle}:
+                    
+1. Google: "${company} official website"
+2. LinkedIn: Search "${company}" 
+3. Check their careers page
+4. Look for engineering team contacts
+5. Identify decision makers (CTO, Engineering Manager)`);
+                });
+            }
+
             function contactCompany(company, jobTitle) {
-                const message = `Subject: Partnership Opportunity - Tech Services for ${company}
+                const contactInfo = `📧 CONTACT STRATEGY: ${company}
 
-Dear ${company} Team,
+STEP 1: FIND DECISION MAKERS
+• Search LinkedIn: "${company}" + "CTO" or "Head of Engineering"
+• Check company website for leadership team
+• Look for "Engineering" or "Technology" team members
+• Find recent ${jobTitle} job posting authors
 
-I noticed you're hiring for ${jobTitle} and wanted to reach out regarding potential partnership opportunities. Our tech service startup specializes in providing development solutions that could complement your growing team.
+STEP 2: CONTACT METHODS
+🔸 LinkedIn: Best for initial outreach
+🔸 Company Email: info@[company].com or careers@[company].com  
+🔸 Contact Forms: Usually on company website
+🔸 Twitter/X: Many CTOs are active on Twitter
 
-We'd love to discuss how we can support your technology initiatives.
+STEP 3: OUTREACH MESSAGE TEMPLATE
+Subject: Partnership Opportunity - Tech Talent Solutions
+
+Hi [Name],
+
+I noticed ${company} is actively hiring for ${jobTitle} roles. As a tech service startup, we specialize in providing skilled developers and technical solutions that could complement your growing team.
+
+Instead of just filling positions, we offer:
+• Dedicated development teams
+• Project-based technical solutions  
+• Flexible scaling for your engineering needs
+
+Would you be open to a brief conversation about how we could support ${company}'s technology initiatives?
 
 Best regards,
 [Your Name]
-[Your Company]`;
+[Your Company]
 
-                // Copy to clipboard and show instruction
-                navigator.clipboard.writeText(message).then(() => {
-                    alert(`📧 Contact message copied to clipboard!
+STEP 4: FOLLOW-UP PLAN
+• Initial contact via LinkedIn
+• Follow up via email after 1 week
+• Provide case studies or portfolio
+• Offer free consultation or pilot project`;
+
+                navigator.clipboard.writeText(contactInfo).then(() => {
+                    alert(`📧 Complete contact strategy for ${company} copied!
                     
-Next steps:
-1. Find ${company} on LinkedIn
-2. Reach out to their HR/Hiring Manager
-3. Paste the message template
-4. Customize and send
+This includes:
+✅ How to find decision makers
+✅ Best contact methods
+✅ Professional outreach template
+✅ Follow-up strategy
 
-The company is actively hiring for ${jobTitle}, making this a perfect time to connect!`);
+Start with LinkedIn to find their CTO or Engineering Manager.`);
                 }).catch(() => {
-                    // Fallback if clipboard doesn't work
                     alert(`Contact ${company} about ${jobTitle}:
                     
-1. Search for ${company} on LinkedIn
-2. Connect with their hiring manager
-3. Mention their ${jobTitle} posting
-4. Propose your tech services as a partnership opportunity`);
+1. Find their CTO/Engineering Manager on LinkedIn
+2. Send professional connection request
+3. Mention their ${jobTitle} hiring
+4. Offer tech services as partnership
+5. Follow up with portfolio/case studies`);
                 });
             }
 
