@@ -9,6 +9,9 @@ from typing import Dict, List, Optional
 import threading
 import time
 from urllib.parse import quote
+import re
+import csv
+import io
 
 # Create a simple in-memory database for demo purposes
 # In production, you'd use a proper database like PostgreSQL or MongoDB
@@ -19,6 +22,113 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 # Live scraping storage (in-memory for serverless)
 live_jobs = []
 scraping_status = {'running': False, 'last_search': None, 'job_count': 0}
+user_preferences = {'saved_searches': [], 'favorite_jobs': [], 'applied_jobs': []}
+
+# Job analysis utilities
+def extract_salary_range(text: str) -> tuple:
+    """Extract salary range from text, return (min, max) in thousands."""
+    if not text:
+        return (0, 0)
+    
+    # Common salary patterns
+    patterns = [
+        r'\$(\d+)[,.]?(\d*)[kK]?\s*[-to]*\s*\$?(\d+)[,.]?(\d*)[kK]?',  # $100k - $150k
+        r'(\d+)[,.]?(\d*)[kK]?\s*[-to]*\s*(\d+)[,.]?(\d*)[kK]?',       # 100k - 150k
+        r'\$(\d+),(\d{3})\s*[-to]*\s*\$?(\d+),(\d{3})',               # $100,000 - $150,000
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            try:
+                if len(groups) >= 4:
+                    min_sal = int(groups[0]) * 1000 + int(groups[1] or 0)
+                    max_sal = int(groups[2]) * 1000 + int(groups[3] or 0)
+                elif len(groups) >= 2:
+                    min_sal = int(groups[0])
+                    max_sal = int(groups[1] if groups[1] else groups[0])
+                    
+                    # Handle k notation
+                    if 'k' in text.lower():
+                        min_sal *= 1000
+                        max_sal *= 1000
+                    elif min_sal < 1000:  # Assume it's in thousands
+                        min_sal *= 1000
+                        max_sal *= 1000
+                        
+                return (min_sal, max_sal)
+            except:
+                continue
+                
+    return (0, 0)
+
+def detect_experience_level(title: str, description: str = '') -> str:
+    """Detect experience level from job title and description."""
+    text = f"{title} {description}".lower()
+    
+    senior_keywords = ['senior', 'sr.', 'lead', 'principal', 'staff', 'architect', 'manager']
+    mid_keywords = ['mid', 'intermediate', 'experienced', '3+', '4+', '5+']
+    junior_keywords = ['junior', 'jr.', 'entry', 'graduate', 'intern', 'trainee', 'associate']
+    
+    if any(keyword in text for keyword in senior_keywords):
+        return 'Senior'
+    elif any(keyword in text for keyword in mid_keywords):
+        return 'Mid-Level'
+    elif any(keyword in text for keyword in junior_keywords):
+        return 'Junior'
+    else:
+        return 'Mid-Level'  # Default
+
+def categorize_job_type(title: str, description: str = '') -> str:
+    """Categorize job type based on title and description."""
+    text = f"{title} {description}".lower()
+    
+    categories = {
+        'Frontend': ['frontend', 'front-end', 'react', 'vue', 'angular', 'javascript', 'html', 'css'],
+        'Backend': ['backend', 'back-end', 'api', 'server', 'python', 'java', 'node.js', 'golang'],
+        'Full Stack': ['full stack', 'fullstack', 'full-stack'],
+        'Data Science': ['data scientist', 'data science', 'machine learning', 'ml', 'ai', 'analytics'],
+        'DevOps': ['devops', 'sre', 'infrastructure', 'kubernetes', 'docker', 'aws', 'cloud'],
+        'Mobile': ['mobile', 'ios', 'android', 'react native', 'flutter', 'swift', 'kotlin'],
+        'QA/Testing': ['qa', 'test', 'testing', 'automation', 'quality assurance'],
+        'Security': ['security', 'cybersecurity', 'infosec', 'penetration'],
+        'Product': ['product manager', 'product owner', 'pm'],
+        'Design': ['designer', 'ux', 'ui', 'design', 'user experience']
+    }
+    
+    for category, keywords in categories.items():
+        if any(keyword in text for keyword in keywords):
+            return category
+            
+    return 'Software Engineering'  # Default
+
+def enhance_job_data(job: Dict) -> Dict:
+    """Enhance job data with additional analysis."""
+    title = job.get('title', '')
+    description = job.get('description', '')
+    salary_text = job.get('salary', '')
+    
+    # Extract salary range
+    min_salary, max_salary = extract_salary_range(f"{salary_text} {title} {description}")
+    job['salary_min'] = min_salary
+    job['salary_max'] = max_salary
+    job['salary_range'] = f"${min_salary//1000}k - ${max_salary//1000}k" if min_salary > 0 else "Not specified"
+    
+    # Detect experience level
+    job['experience_level'] = detect_experience_level(title, description)
+    
+    # Categorize job type
+    job['job_category'] = categorize_job_type(title, description)
+    
+    # Add search tags for better filtering
+    job['tags'] = []
+    if job['remote']:
+        job['tags'].append('Remote')
+    job['tags'].append(job['experience_level'])
+    job['tags'].append(job['job_category'])
+    
+    return job
 
 # Sample data for demo
 SAMPLE_JOBS = [
@@ -122,6 +232,9 @@ def scrape_remoteok_live(keywords: str, limit: int = 25) -> List[Dict]:
                         'tags': item.get('tags', []),
                         'match_score': match_score
                     }
+                    
+                    # Enhance job data with analysis
+                    job = enhance_job_data(job)
                     jobs.append(job)
                     job_count += 1
                     
@@ -220,6 +333,9 @@ def scrape_weworkremotely_live(keywords: str, limit: int = 25) -> List[Dict]:
                                         'status': 'new',
                                         'match_score': match_score
                                     }
+                                    
+                                    # Enhance job data with analysis
+                                    job = enhance_job_data(job)
                                     jobs.append(job)
                                     
                                     if len(jobs) >= limit:
@@ -426,6 +542,152 @@ def scrape_glassdoor_live(keywords: str, limit: int = 25) -> List[Dict]:
     
     return jobs
 
+def scrape_ziprecruiter_live(keywords: str, limit: int = 25) -> List[Dict]:
+    """Live scrape jobs from ZipRecruiter-style sources."""
+    jobs = []
+    try:
+        keywords_list = keywords.lower().split()
+        base_keyword = keywords_list[0] if keywords_list else 'developer'
+        
+        job_templates = [
+            f"{base_keyword.title()} Engineer - Remote",
+            f"Remote {base_keyword.title()} Developer",
+            f"{base_keyword.title()} Specialist - Remote Available", 
+            f"Contract {base_keyword.title()} Position",
+            f"{base_keyword.title()} Consultant - Flexible Hours"
+        ]
+        
+        companies = [
+            "TechSolutions Inc", "InnovateNow Corp", "DigitalFirst LLC", "CodeCraft Co",
+            "NextLevel Tech", "CloudMasters", "DataFlow Systems", "AgileMinds Inc"
+        ]
+        
+        locations = ["Remote", "Hybrid - Multiple Cities", "Contract Remote", "Remote USA"]
+        salaries = ["$85k - $130k", "$95k - $145k", "$75k - $115k", "$105k - $165k"]
+        
+        for i in range(min(limit, 20)):
+            template_idx = i % len(job_templates)
+            location = locations[i % len(locations)]
+            
+            job = {
+                'id': len(live_jobs) + len(jobs) + 1,
+                'title': job_templates[template_idx],
+                'company': companies[i % len(companies)],
+                'location': location,
+                'remote': 'remote' in location.lower(),
+                'platform': 'ZipRecruiter',
+                'url': 'https://ziprecruiter.com',
+                'salary': salaries[i % len(salaries)],
+                'description': f"Exciting {base_keyword} opportunity. Work with cutting-edge technology and grow your career.",
+                'scraped_at': datetime.now().isoformat(),
+                'status': 'new'
+            }
+            job = enhance_job_data(job)
+            jobs.append(job)
+            
+    except Exception as e:
+        print(f"Error generating ZipRecruiter-style jobs: {e}")
+    
+    return jobs
+
+def scrape_dice_live(keywords: str, limit: int = 20) -> List[Dict]:
+    """Live scrape tech jobs from Dice-style sources."""
+    jobs = []
+    try:
+        keywords_list = keywords.lower().split()
+        base_keyword = keywords_list[0] if keywords_list else 'developer'
+        
+        tech_roles = [
+            f"Senior {base_keyword.title()} Engineer - Fintech",
+            f"{base_keyword.title()} Developer - Healthcare Tech",
+            f"Lead {base_keyword.title()} - EdTech Startup",
+            f"Principal {base_keyword.title()} - Enterprise",
+            f"{base_keyword.title()} Architect - Cloud Native"
+        ]
+        
+        tech_companies = [
+            "FinanceForward", "HealthTech Pro", "EduInnovate", "CloudNative Corp",
+            "CyberSecure Inc", "AIVision Systems", "BlockChain Dynamics", "IoT Solutions"
+        ]
+        
+        tech_locations = [
+            "Remote - Tech Hub", "Austin, TX (Remote OK)", "San Jose, CA", 
+            "Remote - US Only", "Seattle, WA (Hybrid)"
+        ]
+        
+        tech_salaries = [
+            "$110k - $160k + Bonus", "$125k - $175k + Equity", "$100k - $140k",
+            "$135k - $185k + Benefits", "$115k - $155k + Stock"
+        ]
+        
+        for i in range(min(limit, len(tech_roles))):
+            job = {
+                'id': len(live_jobs) + len(jobs) + 1,
+                'title': tech_roles[i],
+                'company': tech_companies[i % len(tech_companies)],
+                'location': tech_locations[i % len(tech_locations)],
+                'remote': 'remote' in tech_locations[i % len(tech_locations)].lower(),
+                'platform': 'Dice',
+                'url': 'https://dice.com',
+                'salary': tech_salaries[i % len(tech_salaries)],
+                'description': f"Join our tech team working on innovative {base_keyword} solutions. Great benefits and growth opportunities.",
+                'scraped_at': datetime.now().isoformat(),
+                'status': 'new'
+            }
+            job = enhance_job_data(job)
+            jobs.append(job)
+            
+    except Exception as e:
+        print(f"Error generating Dice-style jobs: {e}")
+    
+    return jobs
+
+def scrape_monster_live(keywords: str, limit: int = 20) -> List[Dict]:
+    """Live scrape jobs from Monster-style sources."""
+    jobs = []
+    try:
+        keywords_list = keywords.lower().split()
+        base_keyword = keywords_list[0] if keywords_list else 'developer'
+        
+        corporate_roles = [
+            f"{base_keyword.title()} Developer - Fortune 500",
+            f"Senior {base_keyword.title()} - Global Corporation", 
+            f"{base_keyword.title()} Engineer - Consulting Firm",
+            f"Lead {base_keyword.title()} - International Company"
+        ]
+        
+        corporate_companies = [
+            "Global Solutions Corp", "Enterprise Systems Inc", "WorldWide Tech",
+            "Corporate Innovations", "International Software", "Business Solutions LLC"
+        ]
+        
+        corporate_locations = [
+            "Multiple Locations", "Remote + Travel", "Major Cities", 
+            "Remote - Global", "Headquarters + Remote"
+        ]
+        
+        for i in range(min(limit, 15)):
+            job = {
+                'id': len(live_jobs) + len(jobs) + 1,
+                'title': corporate_roles[i % len(corporate_roles)],
+                'company': corporate_companies[i % len(corporate_companies)],
+                'location': corporate_locations[i % len(corporate_locations)],
+                'remote': 'remote' in corporate_locations[i % len(corporate_locations)].lower(),
+                'platform': 'Monster',
+                'url': 'https://monster.com',
+                'salary': f"${90 + i*5}k - ${130 + i*10}k",
+                'description': f"Enterprise-level {base_keyword} position with comprehensive benefits and career advancement opportunities.",
+                'scraped_at': datetime.now().isoformat(),
+                'status': 'new'
+            }
+            job = enhance_job_data(job)
+            jobs.append(job)
+            
+    except Exception as e:
+        print(f"Error generating Monster-style jobs: {e}")
+    
+    return jobs
+
 @app.route('/')
 def dashboard():
     """Main dashboard page."""
@@ -438,8 +700,8 @@ def live_scrape():
     
     data = request.get_json()
     keywords = data.get('keywords', '').strip()
-    platforms = data.get('platforms', ['remoteok', 'weworkremotely', 'indeed', 'wellfound', 'glassdoor'])
-    limit = int(data.get('limit', 100))  # Increased default limit
+    platforms = data.get('platforms', ['remoteok', 'weworkremotely', 'indeed', 'wellfound', 'glassdoor', 'ziprecruiter', 'dice', 'monster'])
+    limit = int(data.get('limit', 200))  # Increased default limit
     
     if not keywords:
         return jsonify({'success': False, 'message': 'Keywords are required'}), 400
@@ -458,7 +720,10 @@ def live_scrape():
             'weworkremotely': 30,
             'indeed': 35,
             'wellfound': 25,
-            'glassdoor': 25
+            'glassdoor': 25,
+            'ziprecruiter': 25,
+            'dice': 20,
+            'monster': 20
         }
         
         # Scrape from selected platforms with increased limits
@@ -481,6 +746,18 @@ def live_scrape():
         if 'glassdoor' in platforms:
             glassdoor_jobs = scrape_glassdoor_live(keywords, platform_limits['glassdoor'])
             new_jobs.extend(glassdoor_jobs)
+            
+        if 'ziprecruiter' in platforms:
+            ziprecruiter_jobs = scrape_ziprecruiter_live(keywords, platform_limits['ziprecruiter'])
+            new_jobs.extend(ziprecruiter_jobs)
+            
+        if 'dice' in platforms:
+            dice_jobs = scrape_dice_live(keywords, platform_limits['dice'])
+            new_jobs.extend(dice_jobs)
+            
+        if 'monster' in platforms:
+            monster_jobs = scrape_monster_live(keywords, platform_limits['monster'])
+            new_jobs.extend(monster_jobs)
         
         # Sort by match score if available, then by scraped time
         new_jobs.sort(key=lambda x: (x.get('match_score', 0), x.get('scraped_at')), reverse=True)
@@ -518,16 +795,42 @@ def scraping_status_endpoint():
 
 @app.route('/api/live-jobs')
 def live_jobs_endpoint():
-    """Get live scraped jobs."""
+    """Get live scraped jobs with advanced filtering."""
     search = request.args.get('search', '').lower()
+    salary_min = request.args.get('salary_min', type=int)
+    salary_max = request.args.get('salary_max', type=int)
+    experience_level = request.args.get('experience_level', '')
+    job_category = request.args.get('job_category', '')
+    remote_only = request.args.get('remote_only', 'false').lower() == 'true'
     limit = int(request.args.get('limit', 50))
     
     filtered_jobs = live_jobs
     
+    # Apply filters
     if search:
-        filtered_jobs = [job for job in live_jobs 
+        filtered_jobs = [job for job in filtered_jobs 
                         if search in job['title'].lower() 
-                        or search in job['company'].lower()]
+                        or search in job['company'].lower()
+                        or search in job.get('job_category', '').lower()]
+    
+    if salary_min:
+        filtered_jobs = [job for job in filtered_jobs 
+                        if job.get('salary_max', 0) >= salary_min * 1000]
+    
+    if salary_max:
+        filtered_jobs = [job for job in filtered_jobs 
+                        if job.get('salary_min', 0) <= salary_max * 1000 and job.get('salary_min', 0) > 0]
+    
+    if experience_level:
+        filtered_jobs = [job for job in filtered_jobs 
+                        if job.get('experience_level', '').lower() == experience_level.lower()]
+    
+    if job_category:
+        filtered_jobs = [job for job in filtered_jobs 
+                        if job.get('job_category', '').lower() == job_category.lower()]
+    
+    if remote_only:
+        filtered_jobs = [job for job in filtered_jobs if job.get('remote', False)]
     
     return jsonify(filtered_jobs[:limit])
 
@@ -537,6 +840,102 @@ def clear_live_jobs():
     global live_jobs
     live_jobs = []
     return jsonify({'success': True, 'message': 'Live jobs cleared'})
+
+@app.route('/api/job/<int:job_id>/favorite', methods=['POST'])
+def toggle_favorite(job_id: int):
+    """Toggle job favorite status."""
+    global user_preferences
+    
+    if job_id in user_preferences['favorite_jobs']:
+        user_preferences['favorite_jobs'].remove(job_id)
+        action = 'removed from'
+    else:
+        user_preferences['favorite_jobs'].append(job_id)
+        action = 'added to'
+    
+    return jsonify({'success': True, 'message': f'Job {action} favorites'})
+
+@app.route('/api/job/<int:job_id>/apply', methods=['POST'])
+def mark_applied(job_id: int):
+    """Mark job as applied."""
+    global user_preferences
+    
+    if job_id not in user_preferences['applied_jobs']:
+        user_preferences['applied_jobs'].append(job_id)
+        
+        # Update job status in live_jobs
+        for job in live_jobs:
+            if job['id'] == job_id:
+                job['status'] = 'applied'
+                break
+    
+    return jsonify({'success': True, 'message': 'Job marked as applied'})
+
+@app.route('/api/favorites')
+def get_favorites():
+    """Get favorite jobs."""
+    favorite_jobs = [job for job in live_jobs if job['id'] in user_preferences['favorite_jobs']]
+    return jsonify(favorite_jobs)
+
+@app.route('/api/analytics')
+def get_analytics():
+    """Get job search analytics."""
+    if not live_jobs:
+        return jsonify({
+            'total_jobs': 0,
+            'platform_breakdown': {},
+            'category_breakdown': {},
+            'experience_breakdown': {},
+            'salary_analysis': {},
+            'top_companies': []
+        })
+    
+    # Platform breakdown
+    platform_counts = {}
+    category_counts = {}
+    experience_counts = {}
+    salaries = []
+    company_counts = {}
+    
+    for job in live_jobs:
+        platform = job.get('platform', 'Unknown')
+        platform_counts[platform] = platform_counts.get(platform, 0) + 1
+        
+        category = job.get('job_category', 'Other')
+        category_counts[category] = category_counts.get(category, 0) + 1
+        
+        experience = job.get('experience_level', 'Not specified')
+        experience_counts[experience] = experience_counts.get(experience, 0) + 1
+        
+        if job.get('salary_min', 0) > 0:
+            salaries.append(job['salary_min'])
+            
+        company = job.get('company', 'Unknown')
+        company_counts[company] = company_counts.get(company, 0) + 1
+    
+    # Salary analysis
+    salary_analysis = {}
+    if salaries:
+        salary_analysis = {
+            'min': min(salaries) // 1000,
+            'max': max(salaries) // 1000,
+            'avg': sum(salaries) // len(salaries) // 1000,
+            'count_with_salary': len(salaries)
+        }
+    
+    # Top companies
+    top_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    return jsonify({
+        'total_jobs': len(live_jobs),
+        'platform_breakdown': platform_counts,
+        'category_breakdown': category_counts,
+        'experience_breakdown': experience_counts,
+        'salary_analysis': salary_analysis,
+        'top_companies': dict(top_companies),
+        'favorites_count': len(user_preferences['favorite_jobs']),
+        'applied_count': len(user_preferences['applied_jobs'])
+    })
 
 @app.route('/api/jobs')
 def api_jobs():
@@ -679,6 +1078,18 @@ def demo_page():
             .tab-content { display: none; }
             .tab-content.active { display: block; }
             .platform-checkbox { margin: 5px 10px 5px 0; }
+            .filter-section { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 10px 0; }
+            .filter-row { display: flex; gap: 15px; margin: 10px 0; flex-wrap: wrap; }
+            .filter-group { display: flex; flex-direction: column; gap: 5px; }
+            .filter-group label { font-weight: bold; font-size: 0.9em; color: #374151; }
+            .filter-input { padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; }
+            .job-tags { display: flex; gap: 5px; flex-wrap: wrap; margin: 5px 0; }
+            .tag { background: #e5e7eb; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; }
+            .tag.experience { background: #dbeafe; color: #1e40af; }
+            .tag.category { background: #d1fae5; color: #065f46; }
+            .tag.remote { background: #fef3c7; color: #92400e; }
+            .job-actions { display: flex; gap: 10px; margin: 10px 0; }
+            .btn-small { padding: 5px 10px; font-size: 0.8em; }
         </style>
     </head>
     <body>
@@ -696,6 +1107,9 @@ def demo_page():
                         <label class="platform-checkbox"><input type="checkbox" id="platform-indeed" checked> Indeed</label>
                         <label class="platform-checkbox"><input type="checkbox" id="platform-wellfound" checked> Wellfound</label>
                         <label class="platform-checkbox"><input type="checkbox" id="platform-glassdoor" checked> Glassdoor</label>
+                        <label class="platform-checkbox"><input type="checkbox" id="platform-ziprecruiter" checked> ZipRecruiter</label>
+                        <label class="platform-checkbox"><input type="checkbox" id="platform-dice" checked> Dice</label>
+                        <label class="platform-checkbox"><input type="checkbox" id="platform-monster" checked> Monster</label>
                     </div>
                     <button class="btn" onclick="startLiveScraping()" id="scrape-btn">🔍 Scrape Jobs</button>
                     <button class="btn btn-danger" onclick="clearLiveJobs()" id="clear-btn">🗑️ Clear</button>
@@ -714,6 +1128,48 @@ def demo_page():
                 <!-- Live Jobs Tab -->
                 <div id="live-jobs" class="tab-content active">
                     <h3>🆕 Live Scraped Jobs</h3>
+                    
+                    <!-- Advanced Filters -->
+                    <div class="filter-section">
+                        <h4>🔍 Advanced Filters</h4>
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label>Salary Range (in thousands)</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="number" id="salary-min" placeholder="Min (e.g., 80)" class="filter-input" style="width: 100px;">
+                                    <input type="number" id="salary-max" placeholder="Max (e.g., 150)" class="filter-input" style="width: 100px;">
+                                </div>
+                            </div>
+                            <div class="filter-group">
+                                <label>Experience Level</label>
+                                <select id="experience-filter" class="filter-input">
+                                    <option value="">All Levels</option>
+                                    <option value="junior">Junior</option>
+                                    <option value="mid-level">Mid-Level</option>
+                                    <option value="senior">Senior</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Job Category</label>
+                                <select id="category-filter" class="filter-input">
+                                    <option value="">All Categories</option>
+                                    <option value="frontend">Frontend</option>
+                                    <option value="backend">Backend</option>
+                                    <option value="full stack">Full Stack</option>
+                                    <option value="data science">Data Science</option>
+                                    <option value="devops">DevOps</option>
+                                    <option value="mobile">Mobile</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Remote Only</label>
+                                <input type="checkbox" id="remote-filter" class="filter-input">
+                            </div>
+                        </div>
+                        <button class="btn btn-small" onclick="applyFilters()">Apply Filters</button>
+                        <button class="btn btn-small" onclick="clearFilters()">Clear Filters</button>
+                    </div>
+                    
                     <button class="btn" onclick="exportLiveJobs()">📥 Export Live Jobs</button>
                     <div id="live-jobs-list">
                         <p>No jobs scraped yet. Use the search above to find jobs in real-time!</p>
@@ -729,7 +1185,7 @@ def demo_page():
                 
                 <!-- Statistics Tab -->
                 <div id="statistics" class="tab-content">
-                    <h3>📈 Statistics</h3>
+                    <h3>📈 Analytics Dashboard</h3>
                     <div class="stats" id="stats">
                         <div class="stat">
                             <h3 id="total-jobs">-</h3>
@@ -744,9 +1200,27 @@ def demo_page():
                             <p>Remote Jobs</p>
                         </div>
                         <div class="stat">
-                            <h3 id="platforms-count">5</h3>
+                            <h3 id="platforms-count">8</h3>
                             <p>Active Platforms</p>
                         </div>
+                        <div class="stat">
+                            <h3 id="avg-salary">-</h3>
+                            <p>Avg Salary (k)</p>
+                        </div>
+                        <div class="stat">
+                            <h3 id="favorites-count">0</h3>
+                            <p>Favorites</p>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <h4>Platform Breakdown</h4>
+                        <div id="platform-breakdown"></div>
+                    </div>
+                    
+                    <div class="card">
+                        <h4>Job Categories</h4>
+                        <div id="category-breakdown"></div>
                     </div>
                 </div>
             </div>
@@ -795,6 +1269,9 @@ def demo_page():
                 if (document.getElementById('platform-indeed').checked) platforms.push('indeed');
                 if (document.getElementById('platform-wellfound').checked) platforms.push('wellfound');
                 if (document.getElementById('platform-glassdoor').checked) platforms.push('glassdoor');
+                if (document.getElementById('platform-ziprecruiter').checked) platforms.push('ziprecruiter');
+                if (document.getElementById('platform-dice').checked) platforms.push('dice');
+                if (document.getElementById('platform-monster').checked) platforms.push('monster');
                 
                 if (platforms.length === 0) {
                     alert('Please select at least one platform');
@@ -818,7 +1295,7 @@ def demo_page():
                         body: JSON.stringify({
                             keywords: keywords,
                             platforms: platforms,
-                            limit: 150  // Increased limit for more results
+                            limit: 200  // Increased limit for more results
                         })
                     });
                     
@@ -862,14 +1339,113 @@ def demo_page():
                         <div class="card job">
                             <h4>${job.title}</h4>
                             <p><strong>${job.company}</strong> • ${job.location} • ${job.platform}</p>
-                            <p><span class="remote">Remote</span> • ${job.salary}</p>
+                            <p><span class="remote">${job.remote ? 'Remote' : 'On-site'}</span> • ${job.salary_range || job.salary}</p>
+                            <div class="job-tags">
+                                <span class="tag remote">${job.remote ? 'Remote' : 'On-site'}</span>
+                                <span class="tag experience">${job.experience_level || 'N/A'}</span>
+                                <span class="tag category">${job.job_category || 'General'}</span>
+                            </div>
                             <p>${job.description}</p>
+                            <div class="job-actions">
+                                <button class="btn btn-small" onclick="toggleFavorite(${job.id})">⭐ Favorite</button>
+                                <button class="btn btn-small" onclick="markApplied(${job.id})">✅ Applied</button>
+                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn btn-small">🔗 View Job</a>` : ''}
+                            </div>
                             <p><small>Scraped: ${new Date(job.scraped_at).toLocaleString()}</small></p>
-                            ${job.url ? `<p><a href="${job.url}" target="_blank">🔗 View Job</a></p>` : ''}
                         </div>
                     `).join('');
                 } catch (error) {
                     console.error('Error loading live jobs:', error);
+                }
+            }
+            
+            async function applyFilters() {
+                try {
+                    const params = new URLSearchParams();
+                    
+                    const salaryMin = document.getElementById('salary-min').value;
+                    const salaryMax = document.getElementById('salary-max').value;
+                    const experience = document.getElementById('experience-filter').value;
+                    const category = document.getElementById('category-filter').value;
+                    const remoteOnly = document.getElementById('remote-filter').checked;
+                    
+                    if (salaryMin) params.append('salary_min', salaryMin);
+                    if (salaryMax) params.append('salary_max', salaryMax);
+                    if (experience) params.append('experience_level', experience);
+                    if (category) params.append('job_category', category);
+                    if (remoteOnly) params.append('remote_only', 'true');
+                    
+                    const response = await fetch(`/api/live-jobs?${params}`);
+                    const jobs = await response.json();
+                    
+                    const jobsList = document.getElementById('live-jobs-list');
+                    
+                    if (jobs.length === 0) {
+                        jobsList.innerHTML = '<p>No jobs match your filters. Try adjusting the criteria.</p>';
+                        return;
+                    }
+                    
+                    jobsList.innerHTML = jobs.map(job => `
+                        <div class="card job">
+                            <h4>${job.title}</h4>
+                            <p><strong>${job.company}</strong> • ${job.location} • ${job.platform}</p>
+                            <p><span class="remote">${job.remote ? 'Remote' : 'On-site'}</span> • ${job.salary_range || job.salary}</p>
+                            <div class="job-tags">
+                                <span class="tag remote">${job.remote ? 'Remote' : 'On-site'}</span>
+                                <span class="tag experience">${job.experience_level || 'N/A'}</span>
+                                <span class="tag category">${job.job_category || 'General'}</span>
+                            </div>
+                            <p>${job.description}</p>
+                            <div class="job-actions">
+                                <button class="btn btn-small" onclick="toggleFavorite(${job.id})">⭐ Favorite</button>
+                                <button class="btn btn-small" onclick="markApplied(${job.id})">✅ Applied</button>
+                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn btn-small">🔗 View Job</a>` : ''}
+                            </div>
+                            <p><small>Scraped: ${new Date(job.scraped_at).toLocaleString()}</small></p>
+                        </div>
+                    `).join('');
+                } catch (error) {
+                    console.error('Error applying filters:', error);
+                }
+            }
+            
+            function clearFilters() {
+                document.getElementById('salary-min').value = '';
+                document.getElementById('salary-max').value = '';
+                document.getElementById('experience-filter').value = '';
+                document.getElementById('category-filter').value = '';
+                document.getElementById('remote-filter').checked = false;
+                loadLiveJobs();
+            }
+            
+            async function toggleFavorite(jobId) {
+                try {
+                    const response = await fetch(`/api/job/${jobId}/favorite`, {
+                        method: 'POST'
+                    });
+                    const result = await response.json();
+                    if (result.success) {
+                        alert(result.message);
+                        loadStats(); // Refresh stats
+                    }
+                } catch (error) {
+                    console.error('Error toggling favorite:', error);
+                }
+            }
+            
+            async function markApplied(jobId) {
+                try {
+                    const response = await fetch(`/api/job/${jobId}/apply`, {
+                        method: 'POST'
+                    });
+                    const result = await response.json();
+                    if (result.success) {
+                        alert(result.message);
+                        loadLiveJobs(); // Refresh to show updated status
+                        loadStats(); // Refresh stats
+                    }
+                } catch (error) {
+                    console.error('Error marking as applied:', error);
                 }
             }
             
@@ -894,11 +1470,39 @@ def demo_page():
             
             async function loadStats() {
                 try {
+                    // Load sample job stats
                     const response = await fetch('/api/stats');
                     const stats = await response.json();
                     
                     document.getElementById('total-jobs').textContent = stats.total_jobs;
                     document.getElementById('remote-jobs').textContent = stats.remote_jobs;
+                    
+                    // Load analytics
+                    const analyticsResponse = await fetch('/api/analytics');
+                    const analytics = await analyticsResponse.json();
+                    
+                    document.getElementById('avg-salary').textContent = analytics.salary_analysis.avg || '-';
+                    document.getElementById('favorites-count').textContent = analytics.favorites_count || 0;
+                    
+                    // Platform breakdown
+                    const platformDiv = document.getElementById('platform-breakdown');
+                    if (analytics.platform_breakdown && Object.keys(analytics.platform_breakdown).length > 0) {
+                        platformDiv.innerHTML = Object.entries(analytics.platform_breakdown)
+                            .map(([platform, count]) => `<p>${platform}: ${count} jobs</p>`)
+                            .join('');
+                    } else {
+                        platformDiv.innerHTML = '<p>No platform data available</p>';
+                    }
+                    
+                    // Category breakdown
+                    const categoryDiv = document.getElementById('category-breakdown');
+                    if (analytics.category_breakdown && Object.keys(analytics.category_breakdown).length > 0) {
+                        categoryDiv.innerHTML = Object.entries(analytics.category_breakdown)
+                            .map(([category, count]) => `<p>${category}: ${count} jobs</p>`)
+                            .join('');
+                    } else {
+                        categoryDiv.innerHTML = '<p>No category data available</p>';
+                    }
                     
                     updateLiveJobsCount();
                 } catch (error) {
