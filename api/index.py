@@ -612,14 +612,17 @@ def enhance_job_data(job: Dict) -> Dict:
         business_intel = extract_company_intelligence(job)
         job.update(business_intel)
         
-        # Generate working job URL
-        working_url = generate_working_job_url(job)
-        job['url'] = working_url
-        job['original_url'] = job.get('url', '')  # Keep original if it existed
+        # Keep original job URL if it exists, otherwise generate a working URL
+        if not job.get('url') or job.get('url') == '#':
+            working_url = generate_working_job_url(job)
+            job['url'] = working_url
+            job['url_type'] = 'company_search'  # Indicate this is a search-based URL
+        else:
+            job['original_url'] = job.get('url', '')  # Keep original job posting URL
+            job['url_type'] = 'direct_link'  # Indicate this is a direct job posting link
         
         # Add additional job metadata
         job['date_enhanced'] = datetime.now().isoformat()
-        job['url_type'] = 'company_search'  # Indicate this is a search-based URL
         
         # Save job to database if available
         if db:
