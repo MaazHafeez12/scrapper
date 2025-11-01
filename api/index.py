@@ -172,6 +172,15 @@ except ImportError as e:
     SECURITY_ENABLED = False
     SecurityCompliance = None
 
+# Import webhook system module
+try:
+    from webhook_system import WebhookSystem
+    WEBHOOK_ENABLED = True
+except ImportError as e:
+    print(f"Webhook system module not available: {e}")
+    WEBHOOK_ENABLED = False
+    WebhookSystem = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -218,6 +227,14 @@ if SECURITY_ENABLED and db:
         security = SecurityCompliance(db.connection)
     except Exception as e:
         print(f"Security & compliance initialization error: {e}")
+
+# Initialize webhook system
+webhook_system = None
+if WEBHOOK_ENABLED and db:
+    try:
+        webhook_system = WebhookSystem(db.connection)
+    except Exception as e:
+        print(f"Webhook system initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4088,6 +4105,122 @@ def enforce_retention_policies():
         return jsonify({'success': False, 'error': 'Security not available'}), 503
     
     result = security.enforce_retention_policies()
+    return jsonify(result)
+
+# ===== WEBHOOK SYSTEM & REAL-TIME INTEGRATIONS ENDPOINTS =====
+
+@app.route('/api/webhooks/create', methods=['POST'])
+def create_webhook():
+    """Create webhook endpoint."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Webhooks not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'name' not in data or 'url' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, name, url'}), 400
+    
+    result = webhook_system.create_webhook(data)
+    return jsonify(result)
+
+@app.route('/api/webhooks/trigger/<webhook_id>', methods=['POST'])
+def trigger_webhook(webhook_id):
+    """Trigger webhook manually."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Webhooks not available'}), 503
+    
+    data = request.get_json()
+    if 'event' not in data or 'payload' not in data:
+        return jsonify({'success': False, 'error': 'Missing: event, payload'}), 400
+    
+    result = webhook_system.trigger_webhook(
+        webhook_id=webhook_id,
+        event=data['event'],
+        payload=data['payload']
+    )
+    return jsonify(result)
+
+@app.route('/api/webhooks/broadcast', methods=['POST'])
+def broadcast_webhook_event():
+    """Broadcast event to all webhooks."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Webhooks not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'event' not in data or 'payload' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, event, payload'}), 400
+    
+    result = webhook_system.broadcast_event(
+        user_id=data['user_id'],
+        event=data['event'],
+        payload=data['payload']
+    )
+    return jsonify(result)
+
+@app.route('/api/webhooks/retry/<delivery_id>', methods=['POST'])
+def retry_webhook_delivery(delivery_id):
+    """Retry failed webhook delivery."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Webhooks not available'}), 503
+    
+    result = webhook_system.retry_failed_delivery(delivery_id)
+    return jsonify(result)
+
+@app.route('/api/webhooks/logs/<webhook_id>', methods=['GET'])
+def get_webhook_logs(webhook_id):
+    """Get webhook delivery logs."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Webhooks not available'}), 503
+    
+    limit = int(request.args.get('limit', 50))
+    logs = webhook_system.get_webhook_logs(webhook_id, limit)
+    return jsonify({'success': True, 'logs': logs})
+
+@app.route('/api/webhooks/stats', methods=['GET'])
+def get_webhook_stats():
+    """Get webhook statistics."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Webhooks not available'}), 503
+    
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'error': 'Missing: user_id'}), 400
+    
+    stats = webhook_system.get_webhook_stats(user_id)
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/api/integrations/create', methods=['POST'])
+def create_integration():
+    """Create custom integration."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Integrations not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'name' not in data or 'type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, name, type'}), 400
+    
+    result = webhook_system.create_integration(data)
+    return jsonify(result)
+
+@app.route('/api/integrations/sync/<integration_id>', methods=['POST'])
+def sync_integration(integration_id):
+    """Sync integration data."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Integrations not available'}), 503
+    
+    result = webhook_system.sync_integration(integration_id)
+    return jsonify(result)
+
+@app.route('/api/events/subscribe', methods=['POST'])
+def subscribe_to_events():
+    """Subscribe to real-time events."""
+    if not WEBHOOK_ENABLED or not webhook_system:
+        return jsonify({'success': False, 'error': 'Event subscriptions not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'event_type' not in data or 'callback_url' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, event_type, callback_url'}), 400
+    
+    result = webhook_system.create_event_subscription(data)
     return jsonify(result)
 
 # WSGI entry point for Vercel
