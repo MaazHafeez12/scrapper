@@ -190,6 +190,15 @@ except ImportError as e:
     WORKFLOW_ENABLED = False
     WorkflowAutomation = None
 
+# Import team collaboration module
+try:
+    from team_collaboration import TeamCollaboration
+    TEAM_COLLAB_ENABLED = True
+except ImportError as e:
+    print(f"Team collaboration module not available: {e}")
+    TEAM_COLLAB_ENABLED = False
+    TeamCollaboration = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -252,6 +261,14 @@ if WORKFLOW_ENABLED and db:
         workflow_automation = WorkflowAutomation(db.connection)
     except Exception as e:
         print(f"Workflow automation initialization error: {e}")
+
+# Initialize team collaboration
+team_collab = None
+if TEAM_COLLAB_ENABLED and db:
+    try:
+        team_collab = TeamCollaboration(db.connection)
+    except Exception as e:
+        print(f"Team collaboration initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4356,6 +4373,129 @@ def get_workflow_logs(workflow_id):
     limit = int(request.args.get('limit', 50))
     logs = workflow_automation.get_workflow_logs(workflow_id, limit)
     return jsonify({'success': True, 'logs': logs})
+
+# ===== TEAM COLLABORATION & MANAGEMENT ENDPOINTS =====
+
+@app.route('/api/team/workspace', methods=['POST'])
+def create_team_workspace():
+    """Create team workspace."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'owner_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, owner_id'}), 400
+    
+    result = team_collab.create_workspace(data)
+    return jsonify(result)
+
+@app.route('/api/team/workspace/<workspace_id>/member', methods=['POST'])
+def add_workspace_member(workspace_id):
+    """Add member to workspace."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id'}), 400
+    
+    result = team_collab.add_member(
+        workspace_id=workspace_id,
+        user_id=data['user_id'],
+        role=data.get('role', 'member')
+    )
+    return jsonify(result)
+
+@app.route('/api/team/task', methods=['POST'])
+def create_team_task():
+    """Create task."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    data = request.get_json()
+    if 'workspace_id' not in data or 'title' not in data or 'created_by' not in data:
+        return jsonify({'success': False, 'error': 'Missing: workspace_id, title, created_by'}), 400
+    
+    result = team_collab.create_task(data)
+    return jsonify(result)
+
+@app.route('/api/team/task/<task_id>', methods=['PUT'])
+def update_team_task(task_id):
+    """Update task."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    data = request.get_json()
+    result = team_collab.update_task(task_id, data)
+    return jsonify(result)
+
+@app.route('/api/team/comment', methods=['POST'])
+def add_team_comment():
+    """Add comment to task."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    data = request.get_json()
+    if 'task_id' not in data or 'user_id' not in data or 'content' not in data:
+        return jsonify({'success': False, 'error': 'Missing: task_id, user_id, content'}), 400
+    
+    result = team_collab.add_comment(data)
+    return jsonify(result)
+
+@app.route('/api/team/activity/<workspace_id>', methods=['GET'])
+def get_team_activity_feed(workspace_id):
+    """Get workspace activity feed."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    limit = int(request.args.get('limit', 50))
+    activities = team_collab.get_activity_feed(workspace_id, limit)
+    return jsonify({'success': True, 'activities': activities})
+
+@app.route('/api/team/notifications', methods=['GET'])
+def get_team_notifications():
+    """Get user notifications."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'error': 'Missing: user_id'}), 400
+    
+    unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+    notifications = team_collab.get_notifications(user_id, unread_only)
+    return jsonify({'success': True, 'notifications': notifications})
+
+@app.route('/api/team/notifications/<notification_id>/read', methods=['PUT'])
+def mark_team_notification_read(notification_id):
+    """Mark notification as read."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    result = team_collab.mark_notification_read(notification_id)
+    return jsonify(result)
+
+@app.route('/api/team/analytics/<workspace_id>', methods=['GET'])
+def get_team_analytics(workspace_id):
+    """Get team analytics."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    analytics = team_collab.get_team_analytics(workspace_id)
+    return jsonify({'success': True, 'analytics': analytics})
+
+@app.route('/api/team/search/<workspace_id>', methods=['GET'])
+def search_team_workspace(workspace_id):
+    """Search workspace content."""
+    if not TEAM_COLLAB_ENABLED or not team_collab:
+        return jsonify({'success': False, 'error': 'Team collaboration not available'}), 503
+    
+    query = request.args.get('q', '')
+    if not query:
+        return jsonify({'success': False, 'error': 'Missing query parameter: q'}), 400
+    
+    results = team_collab.search_workspace(workspace_id, query)
+    return jsonify(results)
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
