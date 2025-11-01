@@ -176,6 +176,177 @@ def scrape_indeed_live(keywords: str, limit: int = 20) -> List[Dict]:
     
     return jobs
 
+def scrape_weworkremotely_live(keywords: str, limit: int = 20) -> List[Dict]:
+    """Scrape WeWorkRemotely for live jobs."""
+    jobs = []
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        url = f"https://weworkremotely.com/remote-jobs/search?utf8=%E2%9C%93&term={quote(keywords)}"
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            job_elements = soup.find_all('li', class_='feature')[:limit]
+            
+            for element in job_elements:
+                try:
+                    title_elem = element.find('span', class_='title')
+                    company_elem = element.find('span', class_='company')
+                    
+                    if title_elem and company_elem:
+                        job = {
+                            'title': title_elem.get_text(strip=True),
+                            'company': company_elem.get_text(strip=True),
+                            'location': 'Remote',
+                            'platform': 'WeWorkRemotely',
+                            'url': f"https://weworkremotely.com{element.find('a')['href']}" if element.find('a') else '',
+                            'description': title_elem.get_text(strip=True),
+                            'date_posted': datetime.now().strftime('%Y-%m-%d'),
+                            'id': len(jobs) + 1
+                        }
+                        jobs.append(enhance_job_data(job))
+                except Exception as e:
+                    continue
+                    
+    except Exception as e:
+        print(f"Error scraping WeWorkRemotely: {e}")
+    
+    return jobs
+
+def scrape_glassdoor_live(keywords: str, limit: int = 20) -> List[Dict]:
+    """Scrape Glassdoor for live jobs."""
+    jobs = []
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        url = f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={quote(keywords)}&locT=N&locId=11047&jobType=fulltime"
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            job_elements = soup.find_all('div', class_='react-job-listing')[:limit]
+            
+            for element in job_elements:
+                try:
+                    title_elem = element.find('a', attrs={'data-test': 'job-title'})
+                    company_elem = element.find('span', attrs={'data-test': 'employer-name'})
+                    
+                    if title_elem and company_elem:
+                        job = {
+                            'title': title_elem.get_text(strip=True),
+                            'company': company_elem.get_text(strip=True),
+                            'location': 'Remote',
+                            'platform': 'Glassdoor',
+                            'url': f"https://www.glassdoor.com{title_elem['href']}" if title_elem.get('href') else '',
+                            'description': title_elem.get_text(strip=True),
+                            'date_posted': datetime.now().strftime('%Y-%m-%d'),
+                            'id': len(jobs) + 1
+                        }
+                        jobs.append(enhance_job_data(job))
+                except Exception as e:
+                    continue
+                    
+    except Exception as e:
+        print(f"Error scraping Glassdoor: {e}")
+    
+    return jobs
+
+def scrape_angellist_live(keywords: str, limit: int = 20) -> List[Dict]:
+    """Scrape AngelList/Wellfound for live jobs."""
+    jobs = []
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        # Try both old AngelList and new Wellfound
+        for base_url in ['https://angel.co', 'https://wellfound.com']:
+            try:
+                url = f"{base_url}/jobs?keywords={quote(keywords)}"
+                response = requests.get(url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    job_elements = soup.find_all('div', class_='startup-job-listing')[:limit//2]
+                    
+                    for element in job_elements:
+                        try:
+                            title_elem = element.find('h4') or element.find('h3')
+                            company_elem = element.find('span', class_='startup-name')
+                            
+                            if title_elem and company_elem:
+                                job = {
+                                    'title': title_elem.get_text(strip=True),
+                                    'company': company_elem.get_text(strip=True),
+                                    'location': 'Remote',
+                                    'platform': 'Wellfound',
+                                    'url': f"{base_url}{element.find('a')['href']}" if element.find('a') else '',
+                                    'description': title_elem.get_text(strip=True),
+                                    'date_posted': datetime.now().strftime('%Y-%m-%d'),
+                                    'id': len(jobs) + 1
+                                }
+                                jobs.append(enhance_job_data(job))
+                        except Exception as e:
+                            continue
+                break  # Exit loop if successful
+            except Exception as e:
+                continue
+                    
+    except Exception as e:
+        print(f"Error scraping AngelList/Wellfound: {e}")
+    
+    return jobs
+
+def scrape_nodesk_live(keywords: str, limit: int = 20) -> List[Dict]:
+    """Scrape NoDesk for live remote jobs."""
+    jobs = []
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        url = f"https://nodesk.co/remote-jobs/"
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            job_elements = soup.find_all('div', class_='job-board-single')[:limit]
+            
+            for element in job_elements:
+                try:
+                    title_elem = element.find('h3') or element.find('h2')
+                    company_elem = element.find('span', class_='company') or element.find('div', class_='company')
+                    
+                    if title_elem and company_elem:
+                        title_text = title_elem.get_text(strip=True)
+                        company_text = company_elem.get_text(strip=True)
+                        
+                        # Filter by keywords
+                        if any(keyword.lower() in title_text.lower() for keyword in keywords.split()):
+                            job = {
+                                'title': title_text,
+                                'company': company_text,
+                                'location': 'Remote',
+                                'platform': 'NoDesk',
+                                'url': element.find('a')['href'] if element.find('a') else '',
+                                'description': title_text,
+                                'date_posted': datetime.now().strftime('%Y-%m-%d'),
+                                'id': len(jobs) + 1
+                            }
+                            jobs.append(enhance_job_data(job))
+                except Exception as e:
+                    continue
+                    
+    except Exception as e:
+        print(f"Error scraping NoDesk: {e}")
+    
+    return jobs
+
 # Flask Routes
 @app.route('/')
 def dashboard():
@@ -184,12 +355,12 @@ def dashboard():
 
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
-    """Live scraping endpoint."""
+    """Live scraping endpoint with expanded platform coverage."""
     global live_jobs, scraping_status
     
     data = request.get_json()
     keywords = data.get('keywords', 'python developer')
-    platforms = data.get('platforms', ['remoteok', 'indeed'])
+    platforms = data.get('platforms', ['remoteok', 'indeed', 'weworkremotely', 'glassdoor', 'wellfound', 'nodesk'])
     
     scraping_status['running'] = True
     scraping_status['last_search'] = keywords
@@ -198,13 +369,25 @@ def live_scrape():
     live_jobs.clear()
     
     try:
-        # Scrape from selected platforms
+        # Scrape from all available platforms
         for platform in platforms:
             if platform == 'remoteok':
-                platform_jobs = scrape_remoteok_live(keywords, 15)
+                platform_jobs = scrape_remoteok_live(keywords, 20)
                 live_jobs.extend(platform_jobs)
             elif platform == 'indeed':
-                platform_jobs = scrape_indeed_live(keywords, 15)
+                platform_jobs = scrape_indeed_live(keywords, 20)
+                live_jobs.extend(platform_jobs)
+            elif platform == 'weworkremotely':
+                platform_jobs = scrape_weworkremotely_live(keywords, 20)
+                live_jobs.extend(platform_jobs)
+            elif platform == 'glassdoor':
+                platform_jobs = scrape_glassdoor_live(keywords, 20)
+                live_jobs.extend(platform_jobs)
+            elif platform == 'wellfound':
+                platform_jobs = scrape_angellist_live(keywords, 20)
+                live_jobs.extend(platform_jobs)
+            elif platform == 'nodesk':
+                platform_jobs = scrape_nodesk_live(keywords, 20)
                 live_jobs.extend(platform_jobs)
             
             time.sleep(1)  # Rate limiting
@@ -262,7 +445,7 @@ def stats():
         'total_jobs': len(live_jobs),
         'total_leads': len(business_leads),
         'high_value_leads': len([l for l in business_leads if l['lead_score'] >= 70]),
-        'platforms_active': 2,
+        'platforms_active': 6,  # Updated to reflect 6 platforms
         'last_search': scraping_status.get('last_search', 'None'),
         'search_status': 'Running' if scraping_status.get('running') else 'Ready'
     })
@@ -333,7 +516,7 @@ def demo():
                     <div>High-Value Leads</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-number" id="platformsActive">2</div>
+                    <div class="stat-number" id="platformsActive">6</div>
                     <div>Platforms Active</div>
                 </div>
             </div>
@@ -388,7 +571,7 @@ def demo():
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             keywords: keywords,
-                            platforms: ['remoteok', 'indeed']
+                            platforms: ['remoteok', 'indeed', 'weworkremotely', 'glassdoor', 'wellfound', 'nodesk']
                         })
                     });
                     
