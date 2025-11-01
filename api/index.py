@@ -1422,6 +1422,7 @@ def live_scrape():
     return jsonify({
         'success': True,
         'jobs_found': len(live_jobs),
+        'jobs': live_jobs,  # Return the actual jobs in the response
         'platforms_scraped': platforms,
         'database_enabled': db is not None,
         'scraper_type': scraping_status.get('scraper_type', 'standard'),
@@ -2046,9 +2047,14 @@ def demo():
                     
                     if (result.success) {
                         statusDiv.innerHTML = `✅ Found ${result.jobs_found} opportunities across ${result.platforms_scraped.length} platforms`;
+                        
+                        // Display the jobs directly from the scraping response (fixes Vercel serverless issue)
+                        if (result.jobs && result.jobs.length > 0) {
+                            displayJobs(result.jobs);
+                        }
+                        
                         setTimeout(() => {
                             statusDiv.classList.add('hidden');
-                            loadLiveJobs();
                             loadBusinessLeads();
                             loadStats();
                         }, 2000);
@@ -2075,19 +2081,18 @@ def demo():
                 }
             }
 
-            async function loadLiveJobs() {
-                try {
-                    const response = await fetch('/api/live-jobs');
-                    const jobs = await response.json();
-                    
-                    const container = document.getElementById('liveJobs');
-                    
-                    if (jobs.length === 0) {
-                        container.innerHTML = '<p>No opportunities found. Try different keywords.</p>';
-                        return;
-                    }
-                    
-                    container.innerHTML = jobs.map(job => `
+            function displayJobs(jobs) {
+                const container = document.getElementById('liveJobs');
+                
+                if (!jobs || jobs.length === 0) {
+                    container.innerHTML = '<p>No opportunities found. Try different keywords.</p>';
+                    return;
+                }
+                
+                console.log(`Displaying ${jobs.length} jobs from platforms:`, 
+                    [...new Set(jobs.map(j => j.platform))]);
+                
+                container.innerHTML = jobs.map(job => `
                         <div class="job-card">
                             <div class="job-title">${job.title}</div>
                             <div class="job-company">${job.company}</div>
@@ -2109,6 +2114,13 @@ def demo():
                             </div>
                         </div>
                     `).join('');
+            }
+
+            async function loadLiveJobs() {
+                try {
+                    const response = await fetch('/api/live-jobs');
+                    const jobs = await response.json();
+                    displayJobs(jobs);
                 } catch (error) {
                     console.error('Error loading jobs:', error);
                 }
