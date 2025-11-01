@@ -12,6 +12,7 @@ from urllib.parse import quote
 import re
 import csv
 import io
+from collections import defaultdict
 
 # Create a simple in-memory database for demo purposes
 # In production, you'd use a proper database like PostgreSQL or MongoDB
@@ -23,6 +24,182 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 live_jobs = []
 scraping_status = {'running': False, 'last_search': None, 'job_count': 0}
 user_preferences = {'saved_searches': [], 'favorite_jobs': [], 'applied_jobs': []}
+
+# Business Intelligence for Lead Generation
+business_leads = []
+lead_intelligence = {'companies': {}, 'technologies': {}, 'hiring_trends': {}}
+
+# Business Intelligence Functions
+def extract_company_intelligence(job: Dict) -> Dict:
+    """Extract business intelligence from job posting for lead generation."""
+    company = job.get('company', '').strip()
+    title = job.get('title', '').strip()
+    description = job.get('description', '').strip()
+    
+    # Detect company size indicators
+    company_size = detect_company_size(company, description)
+    
+    # Extract technologies mentioned
+    technologies = extract_technologies(f"{title} {description}")
+    
+    # Detect hiring urgency/scale
+    hiring_scale = detect_hiring_scale(title, description)
+    
+    # Business opportunities
+    opportunities = identify_business_opportunities(title, description, technologies)
+    
+    # Lead scoring
+    lead_score = calculate_lead_score(company_size, technologies, hiring_scale, opportunities)
+    
+    return {
+        'company_size': company_size,
+        'technologies': technologies,
+        'hiring_scale': hiring_scale,
+        'opportunities': opportunities,
+        'lead_score': lead_score,
+        'contact_potential': 'High' if lead_score >= 80 else 'Medium' if lead_score >= 60 else 'Low'
+    }
+
+def detect_company_size(company: str, description: str) -> str:
+    """Detect company size from company name and description."""
+    text = f"{company} {description}".lower()
+    
+    # Fortune 500/Large Enterprise indicators
+    large_indicators = [
+        'fortune 500', 'global', 'international', 'enterprise', 'corporation',
+        'microsoft', 'google', 'amazon', 'apple', 'meta', 'netflix', 'uber',
+        'thousands of employees', 'worldwide', 'multinational'
+    ]
+    
+    # Startup/Scale-up indicators
+    startup_indicators = [
+        'startup', 'scale-up', 'growing team', 'series a', 'series b', 'funded',
+        'venture capital', 'vc', 'angel', 'equity', 'stock options'
+    ]
+    
+    # Mid-size indicators
+    mid_indicators = [
+        'established', 'growing company', 'medium business', 'regional',
+        'hundreds of employees', 'mature startup'
+    ]
+    
+    if any(indicator in text for indicator in large_indicators):
+        return 'Enterprise (500+ employees)'
+    elif any(indicator in text for indicator in startup_indicators):
+        return 'Startup/Scale-up (10-100 employees)'
+    elif any(indicator in text for indicator in mid_indicators):
+        return 'Mid-size (100-500 employees)'
+    else:
+        return 'Small Business (10-50 employees)'
+
+def extract_technologies(text: str) -> List[str]:
+    """Extract technologies and tools mentioned in job posting."""
+    text = text.lower()
+    
+    technologies = {
+        'Programming Languages': ['python', 'javascript', 'java', 'c#', 'php', 'ruby', 'go', 'rust', 'kotlin', 'swift'],
+        'Frontend': ['react', 'vue', 'angular', 'html', 'css', 'typescript', 'nextjs', 'gatsby'],
+        'Backend': ['node.js', 'django', 'flask', 'spring', 'laravel', 'rails', 'express'],
+        'Cloud': ['aws', 'azure', 'gcp', 'google cloud', 'docker', 'kubernetes', 'terraform'],
+        'Database': ['postgresql', 'mysql', 'mongodb', 'redis', 'elasticsearch', 'sql server'],
+        'DevOps': ['jenkins', 'gitlab', 'github actions', 'ansible', 'puppet', 'chef'],
+        'Mobile': ['ios', 'android', 'react native', 'flutter', 'xamarin'],
+        'AI/ML': ['machine learning', 'ai', 'tensorflow', 'pytorch', 'scikit-learn', 'pandas']
+    }
+    
+    found_techs = []
+    for category, tech_list in technologies.items():
+        for tech in tech_list:
+            if tech in text:
+                found_techs.append(f"{tech} ({category})")
+    
+    return found_techs[:10]  # Limit to top 10
+
+def detect_hiring_scale(title: str, description: str) -> str:
+    """Detect the scale of hiring (urgency and volume)."""
+    text = f"{title} {description}".lower()
+    
+    urgent_indicators = [
+        'urgent', 'asap', 'immediate', 'quickly', 'fast-growing',
+        'rapid expansion', 'scaling team', 'hiring multiple'
+    ]
+    
+    bulk_indicators = [
+        'multiple positions', 'several openings', 'team expansion',
+        'growing team', 'hiring spree', '10+ roles', 'many openings'
+    ]
+    
+    if any(indicator in text for indicator in urgent_indicators):
+        return 'High Urgency - Immediate Need'
+    elif any(indicator in text for indicator in bulk_indicators):
+        return 'Bulk Hiring - Multiple Roles'
+    else:
+        return 'Standard Hiring - Single Role'
+
+def identify_business_opportunities(title: str, description: str, technologies: List[str]) -> List[str]:
+    """Identify potential business opportunities for tech services."""
+    text = f"{title} {description}".lower()
+    opportunities = []
+    
+    # Development services opportunities
+    if any('development' in tech.lower() for tech in technologies):
+        opportunities.append('Custom Software Development')
+    
+    # Cloud migration opportunities
+    if any('cloud' in tech.lower() for tech in technologies) or 'migration' in text:
+        opportunities.append('Cloud Migration Services')
+    
+    # DevOps opportunities
+    if any('devops' in tech.lower() for tech in technologies) or 'deployment' in text:
+        opportunities.append('DevOps Consulting')
+    
+    # Mobile app opportunities
+    if any('mobile' in tech.lower() for tech in technologies):
+        opportunities.append('Mobile App Development')
+    
+    # AI/ML opportunities
+    if any('ai' in tech.lower() or 'ml' in tech.lower() for tech in technologies):
+        opportunities.append('AI/ML Consulting')
+    
+    # Consulting opportunities
+    if 'consultant' in text or 'consulting' in text:
+        opportunities.append('Technical Consulting')
+    
+    # If they're hiring developers, they might need outsourcing
+    if 'developer' in title.lower():
+        opportunities.append('Development Team Augmentation')
+    
+    return opportunities
+
+def calculate_lead_score(company_size: str, technologies: List[str], hiring_scale: str, opportunities: List[str]) -> int:
+    """Calculate lead score based on various factors."""
+    score = 0
+    
+    # Company size scoring
+    if 'Enterprise' in company_size:
+        score += 30
+    elif 'Scale-up' in company_size:
+        score += 25
+    elif 'Mid-size' in company_size:
+        score += 20
+    else:
+        score += 15
+    
+    # Technology stack scoring (more technologies = higher need)
+    score += min(len(technologies) * 3, 25)
+    
+    # Hiring scale scoring
+    if 'High Urgency' in hiring_scale:
+        score += 25
+    elif 'Bulk Hiring' in hiring_scale:
+        score += 20
+    else:
+        score += 10
+    
+    # Opportunities scoring
+    score += min(len(opportunities) * 5, 20)
+    
+    return min(score, 100)  # Cap at 100
 
 # Job analysis utilities
 def extract_salary_range(text: str) -> tuple:
@@ -104,7 +281,7 @@ def categorize_job_type(title: str, description: str = '') -> str:
     return 'Software Engineering'  # Default
 
 def enhance_job_data(job: Dict) -> Dict:
-    """Enhance job data with additional analysis."""
+    """Enhance job data with additional analysis and business intelligence."""
     title = job.get('title', '')
     description = job.get('description', '')
     salary_text = job.get('salary', '')
@@ -127,6 +304,9 @@ def enhance_job_data(job: Dict) -> Dict:
         job['tags'].append('Remote')
     job['tags'].append(job['experience_level'])
     job['tags'].append(job['job_category'])
+    
+    # Business Intelligence Analysis
+    job['business_intel'] = extract_company_intelligence(job)
     
     return job
 
@@ -937,6 +1117,207 @@ def get_analytics():
         'applied_count': len(user_preferences['applied_jobs'])
     })
 
+@app.route('/api/business-leads')
+def get_business_leads():
+    """Get companies as potential business leads based on hiring activity."""
+    if not live_jobs:
+        return jsonify([])
+    
+    # Group jobs by company for lead analysis
+    company_leads = defaultdict(lambda: {
+        'company': '',
+        'jobs_count': 0,
+        'roles': [],
+        'technologies': set(),
+        'opportunities': set(),
+        'lead_score': 0,
+        'company_size': '',
+        'hiring_scale': '',
+        'contact_potential': 'Low',
+        'latest_job_date': None
+    })
+    
+    for job in live_jobs:
+        company = job.get('company', 'Unknown')
+        if company == 'Unknown' or company == 'N/A':
+            continue
+            
+        intel = job.get('business_intel', {})
+        
+        lead = company_leads[company]
+        lead['company'] = company
+        lead['jobs_count'] += 1
+        lead['roles'].append(job.get('title', ''))
+        
+        # Aggregate technologies
+        for tech in intel.get('technologies', []):
+            lead['technologies'].add(tech)
+        
+        # Aggregate opportunities
+        for opp in intel.get('opportunities', []):
+            lead['opportunities'].add(opp)
+        
+        # Use highest lead score and latest data
+        if intel.get('lead_score', 0) > lead['lead_score']:
+            lead['lead_score'] = intel.get('lead_score', 0)
+            lead['company_size'] = intel.get('company_size', '')
+            lead['hiring_scale'] = intel.get('hiring_scale', '')
+            lead['contact_potential'] = intel.get('contact_potential', 'Low')
+        
+        # Track latest job posting
+        job_date = job.get('scraped_at')
+        if not lead['latest_job_date'] or job_date > lead['latest_job_date']:
+            lead['latest_job_date'] = job_date
+    
+    # Convert to list and sort by lead score
+    leads = []
+    for company, data in company_leads.items():
+        data['technologies'] = list(data['technologies'])[:10]  # Limit technologies
+        data['opportunities'] = list(data['opportunities'])
+        data['roles'] = list(set(data['roles']))[:5]  # Unique roles, limit to 5
+        leads.append(data)
+    
+    # Sort by lead score and jobs count
+    leads.sort(key=lambda x: (x['lead_score'], x['jobs_count']), reverse=True)
+    
+    return jsonify(leads[:50])  # Return top 50 leads
+
+@app.route('/api/business-intelligence')
+def get_business_intelligence():
+    """Get business intelligence summary for sales team."""
+    if not live_jobs:
+        return jsonify({
+            'total_companies': 0,
+            'high_value_leads': 0,
+            'technology_trends': {},
+            'company_size_distribution': {},
+            'opportunity_breakdown': {},
+            'hiring_urgency': {}
+        })
+    
+    companies = set()
+    high_value_leads = 0
+    tech_trends = defaultdict(int)
+    size_distribution = defaultdict(int)
+    opportunity_breakdown = defaultdict(int)
+    urgency_breakdown = defaultdict(int)
+    
+    for job in live_jobs:
+        company = job.get('company', 'Unknown')
+        if company != 'Unknown' and company != 'N/A':
+            companies.add(company)
+            
+        intel = job.get('business_intel', {})
+        
+        # Count high-value leads
+        if intel.get('lead_score', 0) >= 80:
+            high_value_leads += 1
+        
+        # Technology trends
+        for tech in intel.get('technologies', []):
+            tech_trends[tech] += 1
+        
+        # Company size distribution
+        size = intel.get('company_size', 'Unknown')
+        size_distribution[size] += 1
+        
+        # Opportunity breakdown
+        for opp in intel.get('opportunities', []):
+            opportunity_breakdown[opp] += 1
+        
+        # Hiring urgency
+        urgency = intel.get('hiring_scale', 'Standard')
+        urgency_breakdown[urgency] += 1
+    
+    # Convert defaultdicts to regular dicts and sort
+    tech_trends = dict(sorted(tech_trends.items(), key=lambda x: x[1], reverse=True)[:15])
+    opportunity_breakdown = dict(sorted(opportunity_breakdown.items(), key=lambda x: x[1], reverse=True))
+    
+    return jsonify({
+        'total_companies': len(companies),
+        'high_value_leads': high_value_leads,
+        'technology_trends': tech_trends,
+        'company_size_distribution': dict(size_distribution),
+        'opportunity_breakdown': opportunity_breakdown,
+        'hiring_urgency': dict(urgency_breakdown),
+        'market_insights': generate_market_insights(tech_trends, opportunity_breakdown, size_distribution)
+    })
+
+def generate_market_insights(tech_trends: dict, opportunities: dict, company_sizes: dict) -> List[str]:
+    """Generate actionable market insights for business development."""
+    insights = []
+    
+    # Technology insights
+    if tech_trends:
+        top_tech = max(tech_trends.items(), key=lambda x: x[1])
+        insights.append(f"🔥 {top_tech[0]} is the most in-demand technology with {top_tech[1]} mentions")
+    
+    # Opportunity insights
+    if opportunities:
+        top_opp = max(opportunities.items(), key=lambda x: x[1])
+        insights.append(f"💼 {top_opp[0]} is the top business opportunity with {top_opp[1]} potential leads")
+    
+    # Company size insights
+    if company_sizes:
+        startups = company_sizes.get('Startup/Scale-up (10-100 employees)', 0)
+        enterprises = company_sizes.get('Enterprise (500+ employees)', 0)
+        
+        if startups > enterprises:
+            insights.append(f"🚀 Startup market is active with {startups} hiring startups vs {enterprises} enterprises")
+        else:
+            insights.append(f"🏢 Enterprise market dominates with {enterprises} large companies vs {startups} startups")
+    
+    # Add more insights based on data patterns
+    if 'Custom Software Development' in opportunities:
+        insights.append("💻 High demand for custom software development services")
+    
+    if 'Cloud Migration Services' in opportunities:
+        insights.append("☁️ Cloud migration projects are in demand - good opportunity for cloud services")
+    
+    return insights[:5]  # Return top 5 insights
+
+@app.route('/api/export-leads')
+def export_leads():
+    """Export business leads as CSV for CRM import."""
+    leads_response = get_business_leads()
+    leads = leads_response.get_json()
+    
+    if not leads:
+        return jsonify({'error': 'No leads available'}), 404
+    
+    output = io.StringIO()
+    
+    # Define CSV columns for CRM compatibility
+    fieldnames = [
+        'company', 'lead_score', 'contact_potential', 'jobs_count', 
+        'company_size', 'hiring_scale', 'technologies', 'opportunities',
+        'roles', 'latest_activity'
+    ]
+    
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    
+    for lead in leads:
+        writer.writerow({
+            'company': lead['company'],
+            'lead_score': lead['lead_score'],
+            'contact_potential': lead['contact_potential'],
+            'jobs_count': lead['jobs_count'],
+            'company_size': lead['company_size'],
+            'hiring_scale': lead['hiring_scale'],
+            'technologies': '; '.join(lead['technologies']),
+            'opportunities': '; '.join(lead['opportunities']),
+            'roles': '; '.join(lead['roles']),
+            'latest_activity': lead['latest_job_date']
+        })
+    
+    response = app.response_class(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=business_leads.csv'}
+    )
+    return response
+
 @app.route('/api/jobs')
 def api_jobs():
     """Get jobs with filtering."""
@@ -1048,7 +1429,7 @@ def demo_page():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🚀 Job Scraper Dashboard - Live Scraping</title>
+        <title>🚀 Business Development & Lead Generation Platform</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -1094,13 +1475,15 @@ def demo_page():
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Job Scraper Dashboard - Live Scraping</h1>
+            <h1>🚀 Business Development & Lead Generation Platform</h1>
+            <p><strong>Transform Job Market Intelligence into Business Opportunities</strong></p>
             
             <!-- Live Scraping Section -->
             <div class="card">
-                <h2>🔴 Live Job Scraping</h2>
+                <h2>� Market Intelligence Gathering</h2>
+                <p>Search for technologies and roles to identify companies that need your tech services</p>
                 <div class="search-form">
-                    <input type="text" id="keywords" class="search-input" placeholder="Enter job keywords (e.g., python developer, data scientist)" />
+                    <input type="text" id="keywords" class="search-input" placeholder="Enter tech keywords (e.g., python, react, cloud migration, devops)" />
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0;">
                         <label class="platform-checkbox"><input type="checkbox" id="platform-remoteok" checked> RemoteOK</label>
                         <label class="platform-checkbox"><input type="checkbox" id="platform-wework" checked> WeWorkRemotely</label>
@@ -1111,7 +1494,7 @@ def demo_page():
                         <label class="platform-checkbox"><input type="checkbox" id="platform-dice" checked> Dice</label>
                         <label class="platform-checkbox"><input type="checkbox" id="platform-monster" checked> Monster</label>
                     </div>
-                    <button class="btn" onclick="startLiveScraping()" id="scrape-btn">🔍 Scrape Jobs</button>
+                    <button class="btn" onclick="startLiveScraping()" id="scrape-btn">🔍 Find Business Leads</button>
                     <button class="btn btn-danger" onclick="clearLiveJobs()" id="clear-btn">🗑️ Clear</button>
                 </div>
                 <div id="scraping-status" class="status-bar"></div>
@@ -1120,9 +1503,59 @@ def demo_page():
             <!-- Tabs for Different Job Sources -->
             <div class="card">
                 <div class="tabs">
-                    <button class="tab active" onclick="showTab('live-jobs')">Live Scraped Jobs</button>
-                    <button class="tab" onclick="showTab('sample-jobs')">Sample Jobs</button>
-                    <button class="tab" onclick="showTab('statistics')">Statistics</button>
+                    <button class="tab active" onclick="showTab('business-leads')">🎯 Business Leads</button>
+                    <button class="tab" onclick="showTab('market-intel')">📊 Market Intelligence</button>
+                    <button class="tab" onclick="showTab('live-jobs')">💼 Source Jobs</button>
+                    <button class="tab" onclick="showTab('sample-jobs')">📋 Sample Data</button>
+                    <button class="tab" onclick="showTab('statistics')">📈 Analytics</button>
+                </div>
+                
+                <!-- Business Leads Tab -->
+                <div id="business-leads" class="tab-content active">
+                    <h3>🎯 High-Value Business Leads</h3>
+                    <div style="display: flex; gap: 10px; margin: 10px 0;">
+                        <button class="btn" onclick="loadBusinessLeads()">🔄 Refresh Leads</button>
+                        <button class="btn" onclick="exportLeads()">📥 Export to CRM</button>
+                    </div>
+                    <div id="business-leads-list">
+                        <p>Find companies hiring for technologies you offer services for!</p>
+                    </div>
+                </div>
+                
+                <!-- Market Intelligence Tab -->
+                <div id="market-intel" class="tab-content">
+                    <h3>📊 Market Intelligence Dashboard</h3>
+                    <button class="btn" onclick="loadMarketIntel()">🔄 Refresh Intelligence</button>
+                    
+                    <div class="stats" id="market-stats">
+                        <div class="stat">
+                            <h3 id="total-companies">-</h3>
+                            <p>Companies Identified</p>
+                        </div>
+                        <div class="stat">
+                            <h3 id="high-value-leads">-</h3>
+                            <p>High-Value Leads</p>
+                        </div>
+                        <div class="stat">
+                            <h3 id="avg-lead-score">-</h3>
+                            <p>Avg Lead Score</p>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <h4>🔥 Technology Trends</h4>
+                        <div id="tech-trends"></div>
+                    </div>
+                    
+                    <div class="card">
+                        <h4>💼 Business Opportunities</h4>
+                        <div id="opportunities-breakdown"></div>
+                    </div>
+                    
+                    <div class="card">
+                        <h4>💡 Market Insights</h4>
+                        <div id="market-insights"></div>
+                    </div>
                 </div>
                 
                 <!-- Live Jobs Tab -->
@@ -1253,6 +1686,10 @@ def demo_page():
                     loadSampleJobs();
                 } else if (tabName === 'statistics') {
                     loadStats();
+                } else if (tabName === 'business-leads') {
+                    loadBusinessLeads();
+                } else if (tabName === 'market-intel') {
+                    loadMarketIntel();
                 }
             }
             
@@ -1307,7 +1744,8 @@ def demo_page():
                         const breakdownText = Object.entries(breakdown)
                             .map(([platform, count]) => `${platform}: ${count}`)
                             .join(', ');
-                        statusDiv.textContent = `✅ ${result.message} (${breakdownText})`;
+                        statusDiv.textContent = `✅ Found ${result.job_count} potential leads! (${breakdownText})`;
+                        loadBusinessLeads(); // Load business leads
                         loadLiveJobs();
                         updateLiveJobsCount();
                     } else {
@@ -1449,6 +1887,122 @@ def demo_page():
                 }
             }
             
+            async function loadBusinessLeads() {
+                try {
+                    const response = await fetch('/api/business-leads');
+                    const leads = await response.json();
+                    
+                    const leadsList = document.getElementById('business-leads-list');
+                    
+                    if (leads.length === 0) {
+                        leadsList.innerHTML = '<p>No business leads found. Run a technology search to identify potential clients!</p>';
+                        return;
+                    }
+                    
+                    leadsList.innerHTML = leads.map(lead => `
+                        <div class="card job" style="border-left: 4px solid ${getLeadColor(lead.lead_score)};">
+                            <h4>🏢 ${lead.company}</h4>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <p><strong>Lead Score: ${lead.lead_score}/100</strong> • ${lead.contact_potential} Priority</p>
+                                <span class="tag" style="background: ${getLeadColor(lead.lead_score)}; color: white;">${lead.contact_potential}</span>
+                            </div>
+                            <p><strong>Company Size:</strong> ${lead.company_size}</p>
+                            <p><strong>Hiring Activity:</strong> ${lead.jobs_count} active positions (${lead.hiring_scale})</p>
+                            
+                            <div class="job-tags">
+                                ${lead.opportunities.slice(0, 3).map(opp => `<span class="tag category">${opp}</span>`).join('')}
+                            </div>
+                            
+                            <p><strong>Technologies:</strong> ${lead.technologies.slice(0, 5).join(', ')}</p>
+                            <p><strong>Roles Hiring For:</strong> ${lead.roles.slice(0, 3).join(', ')}</p>
+                            
+                            <div class="job-actions">
+                                <button class="btn btn-small" onclick="generateOutreach('${lead.company}')">📧 Generate Outreach</button>
+                                <button class="btn btn-small" onclick="addToCRM('${lead.company}')">➕ Add to CRM</button>
+                                <button class="btn btn-small" onclick="viewCompanyDetails('${lead.company}')">👁️ View Details</button>
+                            </div>
+                            
+                            <p><small>Latest activity: ${new Date(lead.latest_job_date).toLocaleDateString()}</small></p>
+                        </div>
+                    `).join('');
+                } catch (error) {
+                    console.error('Error loading business leads:', error);
+                }
+            }
+            
+            function getLeadColor(score) {
+                if (score >= 80) return '#dc2626'; // Red for high priority
+                if (score >= 60) return '#f59e0b'; // Orange for medium
+                return '#6b7280'; // Gray for low
+            }
+            
+            async function loadMarketIntel() {
+                try {
+                    const response = await fetch('/api/business-intelligence');
+                    const intel = await response.json();
+                    
+                    // Update stats
+                    document.getElementById('total-companies').textContent = intel.total_companies || 0;
+                    document.getElementById('high-value-leads').textContent = intel.high_value_leads || 0;
+                    
+                    // Calculate average lead score
+                    const leadsResponse = await fetch('/api/business-leads');
+                    const leads = await leadsResponse.json();
+                    const avgScore = leads.length > 0 ? Math.round(leads.reduce((sum, lead) => sum + lead.lead_score, 0) / leads.length) : 0;
+                    document.getElementById('avg-lead-score').textContent = avgScore;
+                    
+                    // Technology trends
+                    const techDiv = document.getElementById('tech-trends');
+                    if (intel.technology_trends && Object.keys(intel.technology_trends).length > 0) {
+                        techDiv.innerHTML = Object.entries(intel.technology_trends)
+                            .slice(0, 10)
+                            .map(([tech, count]) => `<p><strong>${tech}:</strong> ${count} mentions</p>`)
+                            .join('');
+                    } else {
+                        techDiv.innerHTML = '<p>No technology data available</p>';
+                    }
+                    
+                    // Opportunities breakdown
+                    const oppDiv = document.getElementById('opportunities-breakdown');
+                    if (intel.opportunity_breakdown && Object.keys(intel.opportunity_breakdown).length > 0) {
+                        oppDiv.innerHTML = Object.entries(intel.opportunity_breakdown)
+                            .map(([opp, count]) => `<p><strong>${opp}:</strong> ${count} potential leads</p>`)
+                            .join('');
+                    } else {
+                        oppDiv.innerHTML = '<p>No opportunities identified yet</p>';
+                    }
+                    
+                    // Market insights
+                    const insightsDiv = document.getElementById('market-insights');
+                    if (intel.market_insights && intel.market_insights.length > 0) {
+                        insightsDiv.innerHTML = intel.market_insights
+                            .map(insight => `<p>💡 ${insight}</p>`)
+                            .join('');
+                    } else {
+                        insightsDiv.innerHTML = '<p>Run a search to generate market insights</p>';
+                    }
+                    
+                } catch (error) {
+                    console.error('Error loading market intelligence:', error);
+                }
+            }
+            
+            function generateOutreach(company) {
+                alert(`Generating personalized outreach email for ${company}...\\n\\nThis would integrate with your email templates and CRM system.`);
+            }
+            
+            function addToCRM(company) {
+                alert(`Adding ${company} to CRM system...\\n\\nThis would create a new lead record with all the intelligence data.`);
+            }
+            
+            function viewCompanyDetails(company) {
+                alert(`Opening detailed company profile for ${company}...\\n\\nThis would show full hiring history, tech stack, and contact information.`);
+            }
+            
+            function exportLeads() {
+                window.open('/api/export-leads', '_blank');
+            }
+            
             async function loadSampleJobs() {
                 try {
                     const response = await fetch('/api/jobs?limit=10');
@@ -1556,7 +2110,8 @@ def demo_page():
             
             // Load initial data
             loadStats();
-            loadLiveJobs();
+            loadBusinessLeads();
+            loadMarketIntel();
             
             // Auto-refresh live jobs count every 30 seconds
             setInterval(updateLiveJobsCount, 30000);
