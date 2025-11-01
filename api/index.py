@@ -126,6 +126,16 @@ except ImportError as e:
     REPORTING_ENABLED = False
     reporting = None
 
+# Import multi-channel outreach module
+try:
+    from multichannel_outreach import MultiChannelOutreach
+    multichannel = MultiChannelOutreach()
+    MULTICHANNEL_ENABLED = True
+except ImportError as e:
+    print(f"Multi-channel outreach module not available: {e}")
+    MULTICHANNEL_ENABLED = False
+    multichannel = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -3184,6 +3194,258 @@ def get_report_templates():
         return jsonify({'success': False, 'error': 'Reporting not available'}), 503
     
     result = reporting.get_available_templates()
+    return jsonify(result)
+
+# ===== MULTI-CHANNEL OUTREACH ENDPOINTS =====
+
+@app.route('/api/multichannel/configure/twilio', methods=['POST'])
+def configure_twilio_sms():
+    """Configure Twilio for SMS."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['account_sid', 'auth_token', 'phone_number']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.configure_twilio(
+        account_sid=data['account_sid'],
+        auth_token=data['auth_token'],
+        phone_number=data['phone_number']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/configure/whatsapp', methods=['POST'])
+def configure_whatsapp_business():
+    """Configure WhatsApp Business API."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['access_token', 'phone_number_id', 'business_account_id']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.configure_whatsapp(
+        access_token=data['access_token'],
+        phone_number_id=data['phone_number_id'],
+        business_account_id=data['business_account_id']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/configure/slack', methods=['POST'])
+def configure_slack_bot():
+    """Configure Slack integration."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['bot_token', 'workspace_id']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.configure_slack(
+        bot_token=data['bot_token'],
+        workspace_id=data['workspace_id']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/sms/send', methods=['POST'])
+def send_sms_message():
+    """Send SMS message."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['to_number', 'message']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.send_sms(
+        to_number=data['to_number'],
+        message=data['message'],
+        lead_id=data.get('lead_id')
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/sms/bulk', methods=['POST'])
+def send_bulk_sms():
+    """Send bulk SMS messages."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    if 'recipients' not in data:
+        return jsonify({'success': False, 'error': 'Missing: recipients'}), 400
+    
+    result = multichannel.send_sms_bulk(recipients=data['recipients'])
+    return jsonify(result)
+
+@app.route('/api/multichannel/whatsapp/send', methods=['POST'])
+def send_whatsapp_message():
+    """Send WhatsApp message."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['to_number', 'message']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.send_whatsapp(
+        to_number=data['to_number'],
+        message=data['message'],
+        lead_id=data.get('lead_id')
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/whatsapp/template', methods=['POST'])
+def send_whatsapp_template():
+    """Send WhatsApp template message."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['to_number', 'template_name', 'parameters']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.send_whatsapp_template(
+        to_number=data['to_number'],
+        template_name=data['template_name'],
+        parameters=data['parameters']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/slack/send', methods=['POST'])
+def send_slack_message():
+    """Send Slack message."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['channel', 'message']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.send_slack_message(
+        channel=data['channel'],
+        message=data['message'],
+        lead_id=data.get('lead_id')
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/slack/dm', methods=['POST'])
+def send_slack_dm():
+    """Send Slack direct message."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['user_id', 'message']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.send_slack_dm(
+        user_id=data['user_id'],
+        message=data['message']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/campaign/create', methods=['POST'])
+def create_multichannel_campaign():
+    """Create multi-channel campaign."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['campaign_name', 'channels', 'message_templates', 'recipients']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.create_multichannel_campaign(
+        campaign_name=data['campaign_name'],
+        channels=data['channels'],
+        message_templates=data['message_templates'],
+        recipients=data['recipients']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/send', methods=['POST'])
+def send_multichannel_message():
+    """Send message across multiple channels."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['recipient', 'channels', 'messages']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.send_multichannel_message(
+        recipient=data['recipient'],
+        channels=data['channels'],
+        messages=data['messages']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/stats', methods=['GET'])
+def get_multichannel_stats():
+    """Get multi-channel statistics."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    result = multichannel.get_channel_stats()
+    return jsonify(result)
+
+@app.route('/api/multichannel/history', methods=['GET'])
+def get_multichannel_history():
+    """Get message history."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    channel = request.args.get('channel')
+    lead_id = request.args.get('lead_id')
+    limit = int(request.args.get('limit', 50))
+    
+    result = multichannel.get_message_history(
+        channel=channel,
+        lead_id=lead_id,
+        limit=limit
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/track-reply', methods=['POST'])
+def track_multichannel_reply():
+    """Track reply to message."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    required = ['message_id', 'reply_content']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = multichannel.track_reply(
+        message_id=data['message_id'],
+        reply_content=data['reply_content']
+    )
+    return jsonify(result)
+
+@app.route('/api/multichannel/recommend-channel', methods=['POST'])
+def recommend_best_channel():
+    """Recommend best channel for lead."""
+    if not MULTICHANNEL_ENABLED or not multichannel:
+        return jsonify({'success': False, 'error': 'Multi-channel not available'}), 503
+    
+    data = request.get_json()
+    if 'lead_engagement' not in data:
+        return jsonify({'success': False, 'error': 'Missing: lead_engagement'}), 400
+    
+    result = multichannel.get_best_channel_for_lead(
+        lead_engagement=data['lead_engagement']
+    )
     return jsonify(result)
 
 # WSGI entry point for Vercel
