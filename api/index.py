@@ -37,6 +37,15 @@ except ImportError as e:
     OUTREACH_TEMPLATES_ENABLED = False
     outreach_personalizer = None
 
+# Import advanced scraper module
+try:
+    from advanced_scraper import advanced_scraper
+    ADVANCED_SCRAPER_ENABLED = True
+except ImportError as e:
+    print(f"Advanced scraper module not available: {e}")
+    ADVANCED_SCRAPER_ENABLED = False
+    advanced_scraper = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -864,12 +873,13 @@ def dashboard():
 
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
-    """Live scraping endpoint with expanded platform coverage and database integration."""
+    """Live scraping endpoint with advanced real-time scraping and database integration."""
     global live_jobs, scraping_status
     
     data = request.get_json()
     keywords = data.get('keywords', 'python developer')
     platforms = data.get('platforms', ['linkedin', 'remoteok', 'indeed', 'weworkremotely', 'glassdoor', 'wellfound', 'nodesk'])
+    use_advanced = data.get('use_advanced_scraper', True)  # Enable by default
     
     scraping_status['running'] = True
     scraping_status['last_search'] = keywords
@@ -880,31 +890,49 @@ def live_scrape():
     try:
         total_leads_before = len(business_leads) if not db else 0
         
-        # Scrape from all available platforms with higher limits
-        for platform in platforms:
-            if platform == 'linkedin':
-                platform_jobs = scrape_linkedin_live(keywords, 30)
-                live_jobs.extend(platform_jobs)
-            elif platform == 'remoteok':
-                platform_jobs = scrape_remoteok_live(keywords, 25)
-                live_jobs.extend(platform_jobs)
-            elif platform == 'indeed':
-                platform_jobs = scrape_indeed_live(keywords, 25)
-                live_jobs.extend(platform_jobs)
-            elif platform == 'weworkremotely':
-                platform_jobs = scrape_weworkremotely_live(keywords, 20)
-                live_jobs.extend(platform_jobs)
-            elif platform == 'glassdoor':
-                platform_jobs = scrape_glassdoor_live(keywords, 20)
-                live_jobs.extend(platform_jobs)
-            elif platform == 'wellfound':
-                platform_jobs = scrape_angellist_live(keywords, 20)
-                live_jobs.extend(platform_jobs)
-            elif platform == 'nodesk':
-                platform_jobs = scrape_nodesk_live(keywords, 15)
-                live_jobs.extend(platform_jobs)
+        # Try advanced scraper first if available
+        if use_advanced and ADVANCED_SCRAPER_ENABLED and advanced_scraper:
+            print("🚀 Using advanced real-time scraper...")
+            scrape_results = advanced_scraper.scrape_all_platforms(keywords)
             
-            time.sleep(1)  # Rate limiting
+            # Process and enhance jobs from advanced scraper
+            for job in scrape_results['all_jobs']:
+                enhanced_job = enhance_job_data(job)
+                live_jobs.append(enhanced_job)
+            
+            scraping_status['scraper_type'] = 'advanced'
+            scraping_status['real_time_data'] = True
+            
+        else:
+            # Fallback to original scraping method
+            print("📊 Using standard scraper...")
+            for platform in platforms:
+                if platform == 'linkedin':
+                    platform_jobs = scrape_linkedin_live(keywords, 30)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'remoteok':
+                    platform_jobs = scrape_remoteok_live(keywords, 25)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'indeed':
+                    platform_jobs = scrape_indeed_live(keywords, 25)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'weworkremotely':
+                    platform_jobs = scrape_weworkremotely_live(keywords, 20)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'glassdoor':
+                    platform_jobs = scrape_glassdoor_live(keywords, 20)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'wellfound':
+                    platform_jobs = scrape_angellist_live(keywords, 20)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'nodesk':
+                    platform_jobs = scrape_nodesk_live(keywords, 15)
+                    live_jobs.extend(platform_jobs)
+                
+                time.sleep(1)  # Rate limiting
+            
+            scraping_status['scraper_type'] = 'standard'
+            scraping_status['real_time_data'] = False
         
         scraping_status['job_count'] = len(live_jobs)
         
@@ -930,13 +958,60 @@ def live_scrape():
         'success': True,
         'jobs_found': len(live_jobs),
         'platforms_scraped': platforms,
-        'database_enabled': db is not None
+        'database_enabled': db is not None,
+        'scraper_type': scraping_status.get('scraper_type', 'standard'),
+        'real_time_data': scraping_status.get('real_time_data', False)
     })
 
 @app.route('/api/scraping-status')
 def scraping_status_endpoint():
     """Get current scraping status."""
     return jsonify(scraping_status)
+
+@app.route('/api/refresh-jobs', methods=['POST'])
+def refresh_jobs():
+    """Manually refresh job data with real-time scraping."""
+    if not ADVANCED_SCRAPER_ENABLED or not advanced_scraper:
+        return jsonify({
+            'success': False,
+            'error': 'Advanced scraper not available',
+            'fallback': 'Use /api/live-scrape endpoint'
+        }), 503
+    
+    data = request.get_json()
+    keywords = data.get('keywords', 'python developer')
+    
+    try:
+        print(f"🔄 Refreshing jobs for: {keywords}")
+        results = advanced_scraper.scrape_all_platforms(keywords)
+        
+        # Process and enhance jobs
+        refreshed_jobs = []
+        for job in results['all_jobs']:
+            enhanced = enhance_job_data(job)
+            refreshed_jobs.append(enhanced)
+            
+            # Update live_jobs list
+            live_jobs.append(enhanced)
+        
+        return jsonify({
+            'success': True,
+            'jobs_refreshed': len(refreshed_jobs),
+            'total_jobs': len(live_jobs),
+            'platform_stats': {
+                'linkedin': len(results.get('linkedin', [])),
+                'indeed': len(results.get('indeed', [])),
+                'remoteok': len(results.get('remoteok', [])),
+                'weworkremotely': len(results.get('weworkremotely', []))
+            },
+            'real_time': True
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/live-jobs')
 def live_jobs_endpoint():
