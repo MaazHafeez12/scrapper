@@ -76,6 +76,16 @@ except ImportError as e:
     CRM_ENABLED = False
     crm = None
 
+# Import AI features module
+try:
+    from ai_features import AIFeatures
+    ai = AIFeatures()
+    AI_ENABLED = True
+except ImportError as e:
+    print(f"AI features module not available: {e}")
+    AI_ENABLED = False
+    ai = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -2551,6 +2561,103 @@ def get_sync_log():
     limit = int(request.args.get('limit', 50))
     result = crm.get_sync_log(limit)
     return jsonify(result)
+
+# ===== AI-POWERED FEATURES ENDPOINTS =====
+
+@app.route('/api/ai/analyze-job', methods=['POST'])
+def analyze_job():
+    """AI-powered job description analysis."""
+    if not AI_ENABLED or not ai:
+        return jsonify({'success': False, 'error': 'AI features not available'}), 503
+    
+    data = request.get_json()
+    if 'description' not in data:
+        return jsonify({'success': False, 'error': 'Missing: description'}), 400
+    
+    analysis = ai.analyze_job_description(
+        job_description=data['description'],
+        job_title=data.get('title', '')
+    )
+    
+    return jsonify({
+        'success': True,
+        'analysis': analysis
+    })
+
+@app.route('/api/ai/batch-analyze', methods=['POST'])
+def batch_analyze():
+    """Batch analyze multiple jobs."""
+    if not AI_ENABLED or not ai:
+        return jsonify({'success': False, 'error': 'AI features not available'}), 503
+    
+    data = request.get_json()
+    if 'jobs' not in data:
+        return jsonify({'success': False, 'error': 'Missing: jobs'}), 400
+    
+    result = ai.batch_analyze_jobs(data['jobs'])
+    return jsonify(result)
+
+@app.route('/api/ai/ml-score', methods=['POST'])
+def ml_score():
+    """ML-enhanced lead scoring."""
+    if not AI_ENABLED or not ai:
+        return jsonify({'success': False, 'error': 'AI features not available'}), 503
+    
+    data = request.get_json()
+    required = ['lead_data', 'job_analysis']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    scoring = ai.ml_enhanced_lead_scoring(
+        lead_data=data['lead_data'],
+        job_analysis=data['job_analysis']
+    )
+    
+    return jsonify({
+        'success': True,
+        'scoring': scoring
+    })
+
+@app.route('/api/ai/predict-response', methods=['POST'])
+def predict_response():
+    """Predict response likelihood."""
+    if not AI_ENABLED or not ai:
+        return jsonify({'success': False, 'error': 'AI features not available'}), 503
+    
+    data = request.get_json()
+    required = ['lead_data', 'outreach_history']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    prediction = ai.predict_response_likelihood(
+        lead_data=data['lead_data'],
+        outreach_history=data['outreach_history']
+    )
+    
+    return jsonify({
+        'success': True,
+        'prediction': prediction
+    })
+
+@app.route('/api/ai/features-status', methods=['GET'])
+def ai_features_status():
+    """Get AI features availability status."""
+    return jsonify({
+        'success': True,
+        'ai_enabled': AI_ENABLED,
+        'features': {
+            'job_analysis': AI_ENABLED,
+            'ml_scoring': AI_ENABLED,
+            'response_prediction': AI_ENABLED,
+            'batch_processing': AI_ENABLED
+        },
+        'capabilities': {
+            'nlp_job_analysis': 'Extract skills, seniority, tech stack, requirements',
+            'ml_lead_scoring': 'Enhanced scoring with feature analysis and confidence',
+            'response_prediction': 'Predict response likelihood and best contact time',
+            'batch_analysis': 'Analyze multiple jobs efficiently'
+        }
+    })
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
