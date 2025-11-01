@@ -46,6 +46,16 @@ except ImportError as e:
     ADVANCED_SCRAPER_ENABLED = False
     advanced_scraper = None
 
+# Import email automation module
+try:
+    from email_automation import EmailAutomation, EMAIL_SEQUENCE_TEMPLATES
+    email_automation = EmailAutomation()
+    EMAIL_AUTOMATION_ENABLED = True
+except ImportError as e:
+    print(f"Email automation module not available: {e}")
+    EMAIL_AUTOMATION_ENABLED = False
+    email_automation = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -1957,6 +1967,204 @@ ${body}`;
     </html>
     '''
     return html
+
+# ===== EMAIL AUTOMATION ENDPOINTS =====
+
+@app.route('/api/email/send', methods=['POST'])
+def send_email():
+    """Send email via Gmail or Outlook."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    data = request.get_json()
+    provider = data.get('provider', 'gmail').lower()  # gmail or outlook
+    
+    required_fields = ['smtp_server', 'smtp_port', 'sender_email', 'sender_password', 
+                      'recipient_email', 'subject', 'body']
+    
+    for field in required_fields:
+        if field not in data:
+            return jsonify({
+                'success': False,
+                'error': f'Missing required field: {field}'
+            }), 400
+    
+    if provider == 'gmail':
+        result = email_automation.send_email_gmail(
+            smtp_server=data['smtp_server'],
+            smtp_port=data['smtp_port'],
+            sender_email=data['sender_email'],
+            sender_password=data['sender_password'],
+            recipient_email=data['recipient_email'],
+            subject=data['subject'],
+            body=data['body'],
+            is_html=data.get('is_html', True)
+        )
+    elif provider == 'outlook':
+        result = email_automation.send_email_outlook(
+            smtp_server=data['smtp_server'],
+            smtp_port=data['smtp_port'],
+            sender_email=data['sender_email'],
+            sender_password=data['sender_password'],
+            recipient_email=data['recipient_email'],
+            subject=data['subject'],
+            body=data['body'],
+            is_html=data.get('is_html', True)
+        )
+    else:
+        return jsonify({
+            'success': False,
+            'error': f'Unsupported provider: {provider}. Use "gmail" or "outlook"'
+        }), 400
+    
+    return jsonify(result)
+
+@app.route('/api/email/sequence/create', methods=['POST'])
+def create_sequence():
+    """Create automated email sequence."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    data = request.get_json()
+    
+    if 'sequence_name' not in data or 'emails' not in data:
+        return jsonify({
+            'success': False,
+            'error': 'Missing required fields: sequence_name, emails'
+        }), 400
+    
+    result = email_automation.create_email_sequence(
+        sequence_name=data['sequence_name'],
+        emails=data['emails']
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/email/sequence/start', methods=['POST'])
+def start_sequence():
+    """Start email sequence for a recipient."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    data = request.get_json()
+    
+    if 'sequence_id' not in data or 'recipient_email' not in data:
+        return jsonify({
+            'success': False,
+            'error': 'Missing required fields: sequence_id, recipient_email'
+        }), 400
+    
+    result = email_automation.start_email_sequence(
+        sequence_id=data['sequence_id'],
+        recipient_email=data['recipient_email'],
+        personalization=data.get('personalization', {})
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/email/responses', methods=['POST'])
+def check_responses():
+    """Check for email responses."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    data = request.get_json()
+    
+    required_fields = ['imap_server', 'email_address', 'password']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({
+                'success': False,
+                'error': f'Missing required field: {field}'
+            }), 400
+    
+    result = email_automation.check_email_responses(
+        imap_server=data['imap_server'],
+        email_address=data['email_address'],
+        password=data['password'],
+        since_date=data.get('since_date')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/email/stats', methods=['GET'])
+def email_stats():
+    """Get email campaign statistics."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    stats = email_automation.get_email_stats()
+    return jsonify({
+        'success': True,
+        'stats': stats
+    })
+
+@app.route('/api/email/templates', methods=['GET'])
+def email_templates():
+    """Get pre-configured email sequence templates."""
+    if not EMAIL_AUTOMATION_ENABLED:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    return jsonify({
+        'success': True,
+        'templates': EMAIL_SEQUENCE_TEMPLATES
+    })
+
+@app.route('/api/email/track/open', methods=['POST'])
+def track_email_open():
+    """Track email open."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    data = request.get_json()
+    if 'email_id' not in data:
+        return jsonify({
+            'success': False,
+            'error': 'Missing email_id'
+        }), 400
+    
+    result = email_automation.mark_email_opened(data['email_id'])
+    return jsonify(result)
+
+@app.route('/api/email/track/reply', methods=['POST'])
+def track_email_reply():
+    """Track email reply."""
+    if not EMAIL_AUTOMATION_ENABLED or not email_automation:
+        return jsonify({
+            'success': False,
+            'error': 'Email automation not available'
+        }), 503
+    
+    data = request.get_json()
+    if 'email_id' not in data:
+        return jsonify({
+            'success': False,
+            'error': 'Missing email_id'
+        }), 400
+    
+    result = email_automation.mark_email_replied(data['email_id'])
+    return jsonify(result)
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
