@@ -2040,6 +2040,7 @@ def demo():
                             <div class="meta-item">🛠️ ${job.tech_stack || 'General'}</div>
                             ${job.salary_range ? `<div class="meta-item">💰 ${job.salary_range}</div>` : ''}
                             <div class="job-actions">
+                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn-view" style="text-decoration: none;">🔗 View Original Job</a>` : ''}
                                 <button class="btn-view" onclick="researchCompany('${job.company}', '${job.title}')">� Research Company</button>
                                 <button class="btn-contact" onclick="contactCompany('${job.company}', '${job.title}')">� Get Contact Info</button>
                                 <button class="btn-apply" onclick="saveAsLead('${job.company}', '${job.title}', ${job.lead_score})">⭐ Save Lead</button>
@@ -2081,6 +2082,7 @@ def demo():
                                 </div>
                                 <div class="meta-item">🛠️ ${lead.technologies.join(', ') || 'General Tech'}</div>
                                 <div class="job-actions">
+                                    ${lead.url ? `<a href="${lead.url}" target="_blank" class="btn-view" style="text-decoration: none;">🔗 View Original Job</a>` : ''}
                                     <button class="btn-view" onclick="researchCompany('${lead.company}', '${lead.title}')">� Research Company</button>
                                     <button class="btn-contact" onclick="contactCompany('${lead.company}', '${lead.title}')">📧 Business Contact</button>
                                     <button class="btn-apply" onclick="saveAsLead('${lead.company}', '${lead.title}', ${lead.lead_score})">⭐ Save Lead</button>
