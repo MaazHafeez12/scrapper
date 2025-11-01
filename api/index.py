@@ -116,6 +116,16 @@ except ImportError as e:
     AB_TESTING_ENABLED = False
     ab_testing = None
 
+# Import reporting engine module
+try:
+    from reporting_engine import ReportingEngine
+    reporting = ReportingEngine()
+    REPORTING_ENABLED = True
+except ImportError as e:
+    print(f"Reporting engine module not available: {e}")
+    REPORTING_ENABLED = False
+    reporting = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -3063,6 +3073,117 @@ def get_best_ab_variants():
     metric = request.args.get('metric', 'conversion_rate')
     result = ab_testing.get_best_performing_variants(metric)
     
+    return jsonify(result)
+
+# ===== ADVANCED REPORTING & EXPORTS ENDPOINTS =====
+
+@app.route('/api/reports/generate', methods=['POST'])
+def generate_report():
+    """Generate comprehensive report."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    data = request.get_json()
+    required = ['report_type', 'data']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = reporting.generate_report(
+        report_type=data['report_type'],
+        data=data['data'],
+        format=data.get('format', 'json'),
+        include_charts=data.get('include_charts', True)
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/reports/schedule', methods=['POST'])
+def schedule_report():
+    """Schedule recurring report."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    data = request.get_json()
+    required = ['report_type', 'frequency', 'recipients']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = reporting.schedule_report(
+        report_type=data['report_type'],
+        frequency=data['frequency'],
+        recipients=data['recipients'],
+        format=data.get('format', 'pdf'),
+        data_source=data.get('data_source')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/reports/export', methods=['POST'])
+def export_data():
+    """Export data in various formats."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    data = request.get_json()
+    if 'data_type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: data_type'}), 400
+    
+    result = reporting.export_data(
+        data_type=data['data_type'],
+        filters=data.get('filters'),
+        format=data.get('format', 'csv'),
+        fields=data.get('fields')
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/reports/dashboard', methods=['POST'])
+def create_dashboard():
+    """Create custom dashboard."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    data = request.get_json()
+    required = ['dashboard_name', 'widgets']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = reporting.create_custom_dashboard(
+        dashboard_name=data['dashboard_name'],
+        widgets=data['widgets']
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/reports/scheduled', methods=['GET'])
+def get_scheduled_reports():
+    """Get scheduled reports."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    status = request.args.get('status')
+    result = reporting.get_scheduled_reports(status)
+    
+    return jsonify(result)
+
+@app.route('/api/reports/export-history', methods=['GET'])
+def get_export_history():
+    """Get export history."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    limit = int(request.args.get('limit', 50))
+    result = reporting.get_export_history(limit)
+    
+    return jsonify(result)
+
+@app.route('/api/reports/templates', methods=['GET'])
+def get_report_templates():
+    """Get available report templates."""
+    if not REPORTING_ENABLED or not reporting:
+        return jsonify({'success': False, 'error': 'Reporting not available'}), 503
+    
+    result = reporting.get_available_templates()
     return jsonify(result)
 
 # WSGI entry point for Vercel
