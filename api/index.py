@@ -154,6 +154,15 @@ except ImportError as e:
     VOICE_CALLING_ENABLED = False
     VoiceCallingSystem = None
 
+# Import social media automation module
+try:
+    from social_media import SocialMediaAutomation
+    SOCIAL_MEDIA_ENABLED = True
+except ImportError as e:
+    print(f"Social media automation module not available: {e}")
+    SOCIAL_MEDIA_ENABLED = False
+    SocialMediaAutomation = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -184,6 +193,14 @@ if VOICE_CALLING_ENABLED and db:
         )
     except Exception as e:
         print(f"Voice calling initialization error: {e}")
+
+# Initialize social media automation
+social_media = None
+if SOCIAL_MEDIA_ENABLED and db:
+    try:
+        social_media = SocialMediaAutomation(db.connection)
+    except Exception as e:
+        print(f"Social media automation initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -3752,6 +3769,131 @@ def get_voice_call_analytics():
         return jsonify({'success': False, 'error': 'Missing: date_range'}), 400
     
     analytics = voice_calling.get_call_analytics(data['date_range'])
+    return jsonify({'success': True, 'analytics': analytics})
+
+# ===== SOCIAL MEDIA AUTOMATION ENDPOINTS =====
+
+@app.route('/api/social/connect-linkedin', methods=['POST'])
+def connect_linkedin():
+    """Connect LinkedIn account."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'credentials' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, credentials'}), 400
+    
+    result = social_media.connect_linkedin_account(
+        user_id=data['user_id'],
+        credentials=data['credentials']
+    )
+    return jsonify(result)
+
+@app.route('/api/social/send-connection', methods=['POST'])
+def send_connection_request():
+    """Send LinkedIn connection request."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'account_id' not in data or 'profile_url' not in data:
+        return jsonify({'success': False, 'error': 'Missing: account_id, profile_url'}), 400
+    
+    result = social_media.send_connection_request(
+        account_id=data['account_id'],
+        profile_url=data['profile_url'],
+        message=data.get('message')
+    )
+    return jsonify(result)
+
+@app.route('/api/social/send-message', methods=['POST'])
+def send_linkedin_dm():
+    """Send LinkedIn direct message."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'account_id' not in data or 'profile_url' not in data or 'message' not in data:
+        return jsonify({'success': False, 'error': 'Missing: account_id, profile_url, message'}), 400
+    
+    result = social_media.send_linkedin_message(
+        account_id=data['account_id'],
+        profile_url=data['profile_url'],
+        message=data['message'],
+        campaign_id=data.get('campaign_id')
+    )
+    return jsonify(result)
+
+@app.route('/api/social/auto-engage', methods=['POST'])
+def auto_engage_linkedin_posts():
+    """Auto-engage with LinkedIn posts."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'account_id' not in data or 'keywords' not in data or 'actions' not in data:
+        return jsonify({'success': False, 'error': 'Missing: account_id, keywords, actions'}), 400
+    
+    result = social_media.auto_engage_posts(
+        account_id=data['account_id'],
+        search_keywords=data['keywords'],
+        actions=data['actions'],
+        limit=data.get('limit', 10)
+    )
+    return jsonify(result)
+
+@app.route('/api/social/schedule-post', methods=['POST'])
+def schedule_linkedin_post():
+    """Schedule LinkedIn post."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'account_id' not in data or 'content' not in data or 'scheduled_time' not in data:
+        return jsonify({'success': False, 'error': 'Missing: account_id, content, scheduled_time'}), 400
+    
+    result = social_media.schedule_linkedin_post(
+        account_id=data['account_id'],
+        post_data=data
+    )
+    return jsonify(result)
+
+@app.route('/api/social/campaign', methods=['POST'])
+def create_social_campaign():
+    """Create social media campaign."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'account_id' not in data or 'name' not in data or 'campaign_type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: account_id, name, campaign_type'}), 400
+    
+    result = social_media.create_social_campaign(data)
+    return jsonify(result)
+
+@app.route('/api/social/campaign-stats/<campaign_id>', methods=['GET'])
+def get_social_campaign_stats(campaign_id):
+    """Get social campaign statistics."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    result = social_media.get_campaign_stats(campaign_id)
+    return jsonify(result)
+
+@app.route('/api/social/analytics', methods=['POST'])
+def get_social_analytics():
+    """Get social media analytics."""
+    if not SOCIAL_MEDIA_ENABLED or not social_media:
+        return jsonify({'success': False, 'error': 'Social media not available'}), 503
+    
+    data = request.get_json()
+    if 'account_id' not in data or 'date_range' not in data:
+        return jsonify({'success': False, 'error': 'Missing: account_id, date_range'}), 400
+    
+    analytics = social_media.get_social_analytics(
+        account_id=data['account_id'],
+        date_range=data['date_range']
+    )
     return jsonify({'success': True, 'analytics': analytics})
 
 # WSGI entry point for Vercel
