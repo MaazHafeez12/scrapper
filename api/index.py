@@ -106,6 +106,16 @@ except ImportError as e:
     LEAD_ENRICHMENT_ENABLED = False
     lead_enrichment = None
 
+# Import A/B testing module
+try:
+    from ab_testing import ABTestingFramework
+    ab_testing = ABTestingFramework()
+    AB_TESTING_ENABLED = True
+except ImportError as e:
+    print(f"A/B testing module not available: {e}")
+    AB_TESTING_ENABLED = False
+    ab_testing = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -2952,6 +2962,107 @@ def enrichment_stats():
         return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
     
     result = lead_enrichment.get_enrichment_stats()
+    return jsonify(result)
+
+# ===== A/B TESTING FRAMEWORK ENDPOINTS =====
+
+@app.route('/api/ab-test/create', methods=['POST'])
+def create_ab_test():
+    """Create new A/B test."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    data = request.get_json()
+    required = ['test_name', 'test_type', 'variants']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = ab_testing.create_test(
+        test_name=data['test_name'],
+        test_type=data['test_type'],
+        variants=data['variants'],
+        traffic_split=data.get('traffic_split'),
+        duration_days=data.get('duration_days', 7),
+        min_sample_size=data.get('min_sample_size', 100)
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/ab-test/assign', methods=['POST'])
+def assign_ab_variant():
+    """Assign variant to user."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    data = request.get_json()
+    required = ['test_name', 'user_id']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = ab_testing.assign_variant(
+        test_name=data['test_name'],
+        user_id=data['user_id']
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/ab-test/track', methods=['POST'])
+def track_ab_event():
+    """Track A/B test event."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    data = request.get_json()
+    required = ['test_name', 'variant_name', 'event_type']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = ab_testing.track_event(
+        test_name=data['test_name'],
+        variant_name=data['variant_name'],
+        event_type=data['event_type']
+    )
+    
+    return jsonify(result)
+
+@app.route('/api/ab-test/results/<test_name>', methods=['GET'])
+def get_ab_test_results(test_name):
+    """Get A/B test results."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    result = ab_testing.get_test_results(test_name)
+    return jsonify(result)
+
+@app.route('/api/ab-test/stop/<test_name>', methods=['POST'])
+def stop_ab_test(test_name):
+    """Stop A/B test early."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    result = ab_testing.stop_test(test_name)
+    return jsonify(result)
+
+@app.route('/api/ab-test/all', methods=['GET'])
+def get_all_ab_tests():
+    """Get all A/B tests."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    status = request.args.get('status')
+    result = ab_testing.get_all_tests(status)
+    
+    return jsonify(result)
+
+@app.route('/api/ab-test/best-variants', methods=['GET'])
+def get_best_ab_variants():
+    """Get best performing variants."""
+    if not AB_TESTING_ENABLED or not ab_testing:
+        return jsonify({'success': False, 'error': 'A/B testing not available'}), 503
+    
+    metric = request.args.get('metric', 'conversion_rate')
+    result = ab_testing.get_best_performing_variants(metric)
+    
     return jsonify(result)
 
 # WSGI entry point for Vercel
