@@ -1353,13 +1353,17 @@ def live_scrape():
             
         else:
             # Use API-based scrapers for reliable real data
-            print("📊 Using API scrapers for real jobs...")
+            print(f"📊 Using API scrapers for real jobs. Platforms: {platforms}")
             for platform in platforms:
                 if platform == 'remoteok':
+                    print(f"🔍 Scraping RemoteOK...")
                     platform_jobs = scrape_remoteok_live(keywords, 30)
+                    print(f"   Got {len(platform_jobs)} jobs from RemoteOK")
                     live_jobs.extend(platform_jobs)
                 elif platform == 'adzuna':
+                    print(f"🔍 Scraping Adzuna...")
                     platform_jobs = scrape_adzuna_jobs(keywords, 30)
+                    print(f"   Got {len(platform_jobs)} jobs from Adzuna")
                     live_jobs.extend(platform_jobs)
                 elif platform == 'github':
                     platform_jobs = scrape_github_jobs(keywords, 30)
@@ -1389,6 +1393,13 @@ def live_scrape():
             scraping_status['real_time_data'] = True
         
         scraping_status['job_count'] = len(live_jobs)
+        
+        # Debug: Show platform breakdown
+        platform_counts = {}
+        for job in live_jobs:
+            plat = job.get('platform', 'Unknown')
+            platform_counts[plat] = platform_counts.get(plat, 0) + 1
+        print(f"📊 Platform breakdown: {platform_counts}")
         
         # Save search history to database
         if db and hasattr(db, 'save_search_history'):
