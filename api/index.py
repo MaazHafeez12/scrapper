@@ -1,5 +1,5 @@
 """Simplified Vercel-compatible web dashboard for job scraper with business intelligence."""
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
 import os
 import json
 import requests
@@ -1254,8 +1254,13 @@ def scrape_linkedin_live(keywords: str, limit: int = 30) -> List[Dict]:
 # Flask Routes
 @app.route('/')
 def dashboard():
-    """Main dashboard."""
-    return demo()
+    """Main dashboard - redirects to new scraper UI."""
+    return send_from_directory('../templates', 'dashboard.html')
+
+@app.route('/dashboard')
+def new_dashboard():
+    """New clickable job scraper dashboard."""
+    return send_from_directory('../templates', 'dashboard.html')
 
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
@@ -1810,19 +1815,19 @@ def health():
 
 @app.route('/demo')
 def demo():
-    """Demo page with embedded HTML."""
+    """Interactive Job Scraper Dashboard."""
     html = '''
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Business Development Platform - Lead Generation</title>
+        <title>Job Scraper - Find Real Jobs</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem 0; text-align: center; }
-            .container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
+            .header { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; padding: 2rem; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+            .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
             .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-top: 2rem; }
             .card { background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
             .search-form { margin-bottom: 2rem; }
