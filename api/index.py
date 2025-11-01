@@ -96,6 +96,16 @@ except ImportError as e:
     FOLLOWUP_ENGINE_ENABLED = False
     followup_engine = None
 
+# Import lead enrichment module
+try:
+    from lead_enrichment import LeadEnrichment
+    lead_enrichment = LeadEnrichment()
+    LEAD_ENRICHMENT_ENABLED = True
+except ImportError as e:
+    print(f"Lead enrichment module not available: {e}")
+    LEAD_ENRICHMENT_ENABLED = False
+    lead_enrichment = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -2808,6 +2818,140 @@ def create_custom_followup_rule():
         stop_on_response=data.get('stop_on_response', True)
     )
     
+    return jsonify(result)
+
+# ===== LEAD ENRICHMENT & VERIFICATION ENDPOINTS =====
+
+@app.route('/api/enrichment/configure/clearbit', methods=['POST'])
+def configure_clearbit_api():
+    """Configure Clearbit API."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    if 'api_key' not in data:
+        return jsonify({'success': False, 'error': 'Missing: api_key'}), 400
+    
+    result = lead_enrichment.configure_clearbit(data['api_key'])
+    return jsonify(result)
+
+@app.route('/api/enrichment/configure/hunter', methods=['POST'])
+def configure_hunter_api():
+    """Configure Hunter.io API."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    if 'api_key' not in data:
+        return jsonify({'success': False, 'error': 'Missing: api_key'}), 400
+    
+    result = lead_enrichment.configure_hunter(data['api_key'])
+    return jsonify(result)
+
+@app.route('/api/enrichment/configure/zoominfo', methods=['POST'])
+def configure_zoominfo_api():
+    """Configure ZoomInfo API."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    if 'api_key' not in data:
+        return jsonify({'success': False, 'error': 'Missing: api_key'}), 400
+    
+    result = lead_enrichment.configure_zoominfo(data['api_key'])
+    return jsonify(result)
+
+@app.route('/api/enrichment/clearbit', methods=['POST'])
+def enrich_clearbit():
+    """Enrich using Clearbit."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    result = lead_enrichment.enrich_with_clearbit(
+        email=data.get('email'),
+        domain=data.get('domain')
+    )
+    return jsonify(result)
+
+@app.route('/api/enrichment/verify-email', methods=['POST'])
+def verify_email():
+    """Verify email with Hunter.io."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    if 'email' not in data:
+        return jsonify({'success': False, 'error': 'Missing: email'}), 400
+    
+    result = lead_enrichment.verify_email_hunter(data['email'])
+    return jsonify(result)
+
+@app.route('/api/enrichment/find-email', methods=['POST'])
+def find_email():
+    """Find email with Hunter.io."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    required = ['domain', 'first_name', 'last_name']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = lead_enrichment.find_email_hunter(
+        domain=data['domain'],
+        first_name=data['first_name'],
+        last_name=data['last_name']
+    )
+    return jsonify(result)
+
+@app.route('/api/enrichment/zoominfo', methods=['POST'])
+def enrich_zoominfo():
+    """Enrich using ZoomInfo."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    result = lead_enrichment.enrich_with_zoominfo(
+        company_name=data.get('company_name'),
+        email=data.get('email')
+    )
+    return jsonify(result)
+
+@app.route('/api/enrichment/batch-verify', methods=['POST'])
+def batch_verify_emails():
+    """Batch verify emails."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    if 'emails' not in data:
+        return jsonify({'success': False, 'error': 'Missing: emails'}), 400
+    
+    result = lead_enrichment.batch_verify_emails(data['emails'])
+    return jsonify(result)
+
+@app.route('/api/enrichment/full', methods=['POST'])
+def full_enrichment():
+    """Full lead enrichment using all services."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    data = request.get_json()
+    result = lead_enrichment.full_lead_enrichment(
+        email=data.get('email'),
+        domain=data.get('domain'),
+        company_name=data.get('company_name')
+    )
+    return jsonify(result)
+
+@app.route('/api/enrichment/stats', methods=['GET'])
+def enrichment_stats():
+    """Get enrichment statistics."""
+    if not LEAD_ENRICHMENT_ENABLED or not lead_enrichment:
+        return jsonify({'success': False, 'error': 'Lead enrichment not available'}), 503
+    
+    result = lead_enrichment.get_enrichment_stats()
     return jsonify(result)
 
 # WSGI entry point for Vercel
