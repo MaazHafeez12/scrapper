@@ -747,6 +747,15 @@ def demo():
             .job-company { font-size: 1rem; color: #667eea; margin-bottom: 0.5rem; }
             .job-meta { display: flex; gap: 1rem; margin-bottom: 1rem; }
             .meta-item { background: #f7fafc; padding: 0.25rem 0.75rem; border-radius: 4px; font-size: 0.875rem; }
+            .job-actions { margin-top: 1rem; display: flex; gap: 1rem; }
+            .btn-apply { background: #48bb78; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.875rem; }
+            .btn-apply:hover { background: #38a169; }
+            .btn-view { background: #4299e1; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.875rem; }
+            .btn-view:hover { background: #3182ce; }
+            .btn-contact { background: #ed8936; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.875rem; }
+            .btn-contact:hover { background: #dd6b20; }
+            .job-url { color: #4299e1; text-decoration: none; font-size: 0.875rem; }
+            .job-url:hover { text-decoration: underline; }
             .lead-score { padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: bold; }
             .score-high { background: #c6f6d5; color: #22543d; }
             .score-medium { background: #fed7d7; color: #742a2a; }
@@ -884,7 +893,9 @@ def demo():
                     
                     container.innerHTML = jobs.map(job => `
                         <div class="job-card">
-                            <div class="job-title">${job.title}</div>
+                            <div class="job-title">
+                                ${job.url ? `<a href="${job.url}" target="_blank" class="job-url">${job.title}</a>` : job.title}
+                            </div>
                             <div class="job-company">${job.company}</div>
                             <div class="job-meta">
                                 <span class="meta-item">📍 ${job.location}</span>
@@ -895,6 +906,12 @@ def demo():
                                 </span>
                             </div>
                             <div class="meta-item">🛠️ ${job.tech_stack || 'General'}</div>
+                            ${job.salary_range ? `<div class="meta-item">💰 ${job.salary_range}</div>` : ''}
+                            <div class="job-actions">
+                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn-apply">🚀 Apply Now</a>` : ''}
+                                ${job.url ? `<a href="${job.url}" target="_blank" class="btn-view">👁️ View Job</a>` : ''}
+                                <button class="btn-contact" onclick="contactCompany('${job.company}', '${job.title}')">📧 Contact Company</button>
+                            </div>
                         </div>
                     `).join('');
                 } catch (error) {
@@ -921,7 +938,9 @@ def demo():
                         </div>
                         ${data.leads.slice(-10).map(lead => `
                             <div class="job-card">
-                                <div class="job-title">${lead.title}</div>
+                                <div class="job-title">
+                                    ${lead.job_url ? `<a href="${lead.job_url}" target="_blank" class="job-url">${lead.title}</a>` : lead.title}
+                                </div>
                                 <div class="job-company">🏢 ${lead.company}</div>
                                 <div class="job-meta">
                                     <span class="meta-item">📍 ${lead.location}</span>
@@ -931,6 +950,11 @@ def demo():
                                     </span>
                                 </div>
                                 <div class="meta-item">🛠️ ${lead.technologies.join(', ') || 'General Tech'}</div>
+                                <div class="job-actions">
+                                    ${lead.job_url ? `<a href="${lead.job_url}" target="_blank" class="btn-view">👁️ View Job</a>` : ''}
+                                    <button class="btn-contact" onclick="contactCompany('${lead.company}', '${lead.title}')">📧 Business Contact</button>
+                                    <button class="btn-apply" onclick="saveAsLead('${lead.company}', '${lead.title}', ${lead.lead_score})">⭐ Save Lead</button>
+                                </div>
                             </div>
                         `).join('')}
                     `;
@@ -943,6 +967,65 @@ def demo():
                 if (score >= 70) return 'score-high';
                 if (score >= 40) return 'score-medium';
                 return 'score-low';
+            }
+
+            // Business development functions
+            function contactCompany(company, jobTitle) {
+                const message = `Subject: Partnership Opportunity - Tech Services for ${company}
+
+Dear ${company} Team,
+
+I noticed you're hiring for ${jobTitle} and wanted to reach out regarding potential partnership opportunities. Our tech service startup specializes in providing development solutions that could complement your growing team.
+
+We'd love to discuss how we can support your technology initiatives.
+
+Best regards,
+[Your Name]
+[Your Company]`;
+
+                // Copy to clipboard and show instruction
+                navigator.clipboard.writeText(message).then(() => {
+                    alert(`📧 Contact message copied to clipboard!
+                    
+Next steps:
+1. Find ${company} on LinkedIn
+2. Reach out to their HR/Hiring Manager
+3. Paste the message template
+4. Customize and send
+
+The company is actively hiring for ${jobTitle}, making this a perfect time to connect!`);
+                }).catch(() => {
+                    // Fallback if clipboard doesn't work
+                    alert(`Contact ${company} about ${jobTitle}:
+                    
+1. Search for ${company} on LinkedIn
+2. Connect with their hiring manager
+3. Mention their ${jobTitle} posting
+4. Propose your tech services as a partnership opportunity`);
+                });
+            }
+
+            function saveAsLead(company, jobTitle, leadScore) {
+                const leadData = {
+                    company: company,
+                    position: jobTitle,
+                    score: leadScore,
+                    date: new Date().toLocaleDateString(),
+                    status: 'New Lead'
+                };
+
+                // Store in localStorage for now (in real app, would send to backend)
+                let savedLeads = JSON.parse(localStorage.getItem('businessLeads') || '[]');
+                savedLeads.push(leadData);
+                localStorage.setItem('businessLeads', JSON.stringify(savedLeads));
+
+                alert(`⭐ ${company} saved as a business lead!
+                
+Lead Score: ${leadScore}%
+Position: ${jobTitle}
+Status: Ready for outreach
+
+Tip: They're actively hiring, making this an ideal time to propose your tech services.`);
             }
 
             // Load initial data
