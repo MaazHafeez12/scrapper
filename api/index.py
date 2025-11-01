@@ -66,6 +66,16 @@ except ImportError as e:
     ANALYTICS_ENABLED = False
     analytics = None
 
+# Import CRM integration module
+try:
+    from crm_integration import CRMIntegration
+    crm = CRMIntegration()
+    CRM_ENABLED = True
+except ImportError as e:
+    print(f"CRM integration module not available: {e}")
+    CRM_ENABLED = False
+    crm = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -2347,6 +2357,200 @@ def get_timeseries():
         'success': True,
         'timeseries': timeseries
     })
+
+# ===== CRM INTEGRATION ENDPOINTS =====
+
+@app.route('/api/crm/configure/salesforce', methods=['POST'])
+def configure_salesforce():
+    """Configure Salesforce connection."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    required = ['instance_url', 'access_token']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = crm.configure_salesforce(
+        instance_url=data['instance_url'],
+        access_token=data['access_token'],
+        api_version=data.get('api_version', 'v57.0')
+    )
+    return jsonify(result)
+
+@app.route('/api/crm/configure/hubspot', methods=['POST'])
+def configure_hubspot():
+    """Configure HubSpot connection."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    if 'api_key' not in data:
+        return jsonify({'success': False, 'error': 'Missing: api_key'}), 400
+    
+    result = crm.configure_hubspot(api_key=data['api_key'])
+    return jsonify(result)
+
+@app.route('/api/crm/configure/pipedrive', methods=['POST'])
+def configure_pipedrive():
+    """Configure Pipedrive connection."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    required = ['api_token', 'company_domain']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = crm.configure_pipedrive(
+        api_token=data['api_token'],
+        company_domain=data['company_domain']
+    )
+    return jsonify(result)
+
+@app.route('/api/crm/salesforce/lead', methods=['POST'])
+def create_salesforce_lead():
+    """Create lead in Salesforce."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.salesforce_create_lead(data)
+    return jsonify(result)
+
+@app.route('/api/crm/salesforce/lead/<lead_id>', methods=['PATCH'])
+def update_salesforce_lead(lead_id):
+    """Update lead in Salesforce."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.salesforce_update_lead(lead_id, data)
+    return jsonify(result)
+
+@app.route('/api/crm/salesforce/leads', methods=['GET'])
+def get_salesforce_leads():
+    """Get leads from Salesforce."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    filters = request.args.to_dict()
+    result = crm.salesforce_get_leads(filters if filters else None)
+    return jsonify(result)
+
+@app.route('/api/crm/hubspot/contact', methods=['POST'])
+def create_hubspot_contact():
+    """Create contact in HubSpot."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.hubspot_create_contact(data)
+    return jsonify(result)
+
+@app.route('/api/crm/hubspot/deal', methods=['POST'])
+def create_hubspot_deal():
+    """Create deal in HubSpot."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.hubspot_create_deal(data)
+    return jsonify(result)
+
+@app.route('/api/crm/hubspot/contacts', methods=['GET'])
+def get_hubspot_contacts():
+    """Get contacts from HubSpot."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    limit = int(request.args.get('limit', 100))
+    result = crm.hubspot_get_contacts(limit)
+    return jsonify(result)
+
+@app.route('/api/crm/pipedrive/person', methods=['POST'])
+def create_pipedrive_person():
+    """Create person in Pipedrive."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.pipedrive_create_person(data)
+    return jsonify(result)
+
+@app.route('/api/crm/pipedrive/deal', methods=['POST'])
+def create_pipedrive_deal():
+    """Create deal in Pipedrive."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.pipedrive_create_deal(data)
+    return jsonify(result)
+
+@app.route('/api/crm/pipedrive/deal/<int:deal_id>', methods=['PUT'])
+def update_pipedrive_deal(deal_id):
+    """Update deal in Pipedrive."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    result = crm.pipedrive_update_deal(deal_id, data)
+    return jsonify(result)
+
+@app.route('/api/crm/pipedrive/deals', methods=['GET'])
+def get_pipedrive_deals():
+    """Get deals from Pipedrive."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    status = request.args.get('status', 'all_not_deleted')
+    result = crm.pipedrive_get_deals(status)
+    return jsonify(result)
+
+@app.route('/api/crm/sync', methods=['POST'])
+def sync_to_crm():
+    """Universal sync to any CRM."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    required = ['crm_type', 'record_type', 'data']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing: {required}'}), 400
+    
+    result = crm.sync_to_crm(
+        crm_type=data['crm_type'],
+        record_type=data['record_type'],
+        data=data['data']
+    )
+    return jsonify(result)
+
+@app.route('/api/crm/bulk-sync', methods=['POST'])
+def bulk_sync():
+    """Bulk sync multiple records to CRM."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    data = request.get_json()
+    if 'crm_type' not in data or 'records' not in data:
+        return jsonify({'success': False, 'error': 'Missing: crm_type, records'}), 400
+    
+    result = crm.bulk_sync(
+        crm_type=data['crm_type'],
+        records=data['records']
+    )
+    return jsonify(result)
+
+@app.route('/api/crm/sync-log', methods=['GET'])
+def get_sync_log():
+    """Get CRM sync activity log."""
+    if not CRM_ENABLED or not crm:
+        return jsonify({'success': False, 'error': 'CRM not available'}), 503
+    
+    limit = int(request.args.get('limit', 50))
+    result = crm.get_sync_log(limit)
+    return jsonify(result)
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
