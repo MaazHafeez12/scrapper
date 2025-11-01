@@ -228,6 +228,16 @@ except ImportError as e:
     CacheService = None
     CacheInvalidationService = None
 
+# Import rate limiting
+try:
+    from rate_limiting import RateLimiter, RateLimitService
+    RATE_LIMIT_ENABLED = True
+except ImportError as e:
+    print(f"Rate limiting not available: {e}")
+    RATE_LIMIT_ENABLED = False
+    RateLimiter = None
+    RateLimitService = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -326,6 +336,16 @@ if CACHE_ENABLED:
         cache_invalidation = CacheInvalidationService(cache_service)
     except Exception as e:
         print(f"Caching layer initialization error: {e}")
+
+# Initialize rate limiting
+rate_limiter = None
+rate_limit_service = None
+if RATE_LIMIT_ENABLED:
+    try:
+        rate_limiter = RateLimiter()
+        rate_limit_service = RateLimitService(rate_limiter)
+    except Exception as e:
+        print(f"Rate limiting initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4845,6 +4865,82 @@ def get_cache_keys():
     ]
     
     return jsonify({'success': True, 'keys': keys_with_ttl, 'count': len(keys)})
+
+# ===== Rate Limiting Endpoints =====
+
+@app.route('/api/rate-limit/check', methods=['GET'])
+def check_rate_limit():
+    if not RATE_LIMIT_ENABLED or not rate_limit_service:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    allowed, info = rate_limit_service.check_rate_limit(request)
+    return jsonify({'success': True, 'rate_limit': info})
+
+@app.route('/api/rate-limit/stats', methods=['GET'])
+def get_rate_limit_stats():
+    if not RATE_LIMIT_ENABLED or not rate_limit_service:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    stats = rate_limit_service.get_rate_limit_stats()
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/api/rate-limit/user/<user_id>', methods=['GET'])
+def get_user_rate_limits(user_id):
+    if not RATE_LIMIT_ENABLED or not rate_limit_service:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    limits = rate_limit_service.get_user_rate_limits(user_id)
+    return jsonify({'success': True, 'limits': limits})
+
+@app.route('/api/rate-limit/ip/<ip>', methods=['GET'])
+def get_ip_rate_limits(ip):
+    if not RATE_LIMIT_ENABLED or not rate_limit_service:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    limits = rate_limit_service.get_ip_rate_limits(ip)
+    return jsonify({'success': True, 'limits': limits})
+
+@app.route('/api/rate-limit/whitelist/<user_id>', methods=['POST'])
+def whitelist_user(user_id):
+    if not RATE_LIMIT_ENABLED or not rate_limit_service:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    count = rate_limit_service.whitelist_user(user_id)
+    return jsonify({'success': True, 'message': f'Whitelisted user {user_id}', 'cleared': count})
+
+@app.route('/api/rate-limit/blacklist/<ip>', methods=['POST'])
+def blacklist_ip(ip):
+    if not RATE_LIMIT_ENABLED or not rate_limit_service:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    data = request.get_json() or {}
+    duration = data.get('duration', 3600)
+    
+    rate_limit_service.blacklist_ip(ip, duration)
+    return jsonify({'success': True, 'message': f'Blacklisted IP {ip} for {duration} seconds'})
+
+@app.route('/api/rate-limit/reset', methods=['POST'])
+def reset_rate_limit():
+    if not RATE_LIMIT_ENABLED or not rate_limiter:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    data = request.get_json()
+    if 'key' not in data:
+        return jsonify({'success': False, 'error': 'Missing: key'}), 400
+    
+    rate_limiter.reset_bucket(data['key'])
+    return jsonify({'success': True, 'message': f"Reset rate limit for {data['key']}"})
+
+@app.route('/api/rate-limit/cleanup', methods=['POST'])
+def cleanup_rate_limits():
+    if not RATE_LIMIT_ENABLED or not rate_limiter:
+        return jsonify({'success': False, 'error': 'Rate limiting not enabled'}), 503
+    
+    data = request.get_json() or {}
+    max_age = data.get('max_age', 3600)
+    
+    count = rate_limiter.cleanup_old_buckets(max_age)
+    return jsonify({'success': True, 'cleaned': count, 'max_age': max_age})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
