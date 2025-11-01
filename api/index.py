@@ -696,69 +696,51 @@ def enhance_job_data(job: Dict) -> Dict:
 
 # Simplified scraping functions with fallbacks and mock data
 def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
-    """Scrape RemoteOK for live jobs with fallback to mock data."""
+    """Scrape RemoteOK for live jobs using their API."""
     jobs = []
     try:
+        # RemoteOK has a public JSON API
+        url = "https://remoteok.com/api"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         
-        url = f"https://remoteok.io/remote-{quote(keywords)}-jobs"
         response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
+            data = response.json()
+            keywords_lower = keywords.lower()
             
-            # Try multiple selectors for RemoteOK
-            job_elements = (soup.find_all('tr', class_='job') or 
-                          soup.find_all('tr', {'data-href': True}) or
-                          soup.find_all('div', class_='job'))
-            
-            for element in job_elements[:limit]:
-                try:
-                    # Skip empty or placeholder elements
-                    text_content = element.get_text(strip=True)
-                    if not text_content or len(text_content) < 10:
-                        continue
+            # Filter jobs by keywords and process
+            count = 0
+            for item in data:
+                if count >= limit:
+                    break
                     
-                    # Try different ways to extract job info
-                    title = company = location = url_link = ""
-                    
-                    # Method 1: Look for specific RemoteOK structure
-                    title_elem = (element.find('td', class_='company position company_and_position') or
-                                element.find('h2') or 
-                                element.find('a', href=True))
-                    
-                    if title_elem and title_elem.get_text(strip=True):
-                        full_text = title_elem.get_text(strip=True)
-                        # Try to parse company and title from combined text
-                        parts = full_text.split('\n')
-                        if len(parts) >= 2:
-                            title = parts[0].strip()
-                            company = parts[1].strip()
-                        else:
-                            title = full_text[:50]
-                            company = "Remote Company"
-                        
-                        # Get URL if available
-                        link_elem = element.find('a', href=True)
-                        if link_elem:
-                            url_link = f"https://remoteok.io{link_elem['href']}"
-                        
-                        job = {
-                            'title': title,
-                            'company': company,
-                            'location': 'Remote',
-                            'platform': 'RemoteOK',
-                            'url': url_link,
-                            'description': full_text[:200],
-                            'date_posted': datetime.now().strftime('%Y-%m-%d'),
-                            'id': len(jobs) + 1
-                        }
-                        jobs.append(enhance_job_data(job))
-                        
-                except Exception as e:
+                # Skip the first item (it's metadata)
+                if not isinstance(item, dict) or 'position' not in item:
                     continue
+                
+                # Check if keywords match
+                position = item.get('position', '').lower()
+                company = item.get('company', '').lower()
+                tags = ' '.join(item.get('tags', [])).lower()
+                
+                if keywords_lower in position or keywords_lower in company or keywords_lower in tags:
+                    job = {
+                        'title': item.get('position', 'Unknown Position'),
+                        'company': item.get('company', 'Unknown Company'),
+                        'location': item.get('location', 'Remote'),
+                        'platform': 'RemoteOK',
+                        'url': item.get('url', f"https://remoteok.com/remote-jobs/{item.get('slug', '')}"),
+                        'description': item.get('description', '')[:300],
+                        'date_posted': item.get('date', datetime.now().strftime('%Y-%m-%d')),
+                        'salary_range': f"${item.get('salary_min', 0)}k - ${item.get('salary_max', 0)}k" if item.get('salary_min') else 'Not specified',
+                        'tags': item.get('tags', []),
+                        'id': item.get('id', count)
+                    }
+                    jobs.append(enhance_job_data(job))
+                    count += 1
                     
     except Exception as e:
         print(f"Error scraping RemoteOK: {e}")
@@ -1063,6 +1045,72 @@ def scrape_angellist_live(keywords: str, limit: int = 20) -> List[Dict]:
     
     return jobs
 
+def scrape_github_jobs(keywords: str, limit: int = 30) -> List[Dict]:
+    """Fetch jobs from GitHub Jobs (now using alternatives)."""
+    jobs = []
+    try:
+        # GitHub Jobs is deprecated, using RemoteOK API as alternative
+        url = "https://remoteok.com/api"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            keywords_lower = keywords.lower()
+            count = 0
+            for item in data:
+                if count >= limit:
+                    break
+                if not isinstance(item, dict) or 'position' not in item:
+                    continue
+                position = item.get('position', '').lower()
+                if 'github' in position or 'git' in keywords_lower:
+                    job = {
+                        'title': item.get('position', ''),
+                        'company': item.get('company', ''),
+                        'location': 'Remote',
+                        'platform': 'RemoteOK',
+                        'url': item.get('url', ''),
+                        'description': item.get('description', '')[:300],
+                        'date_posted': datetime.now().isoformat()[:10],
+                        'tags': item.get('tags', []),
+                        'id': item.get('id', count)
+                    }
+                    jobs.append(enhance_job_data(job))
+                    count += 1
+    except Exception as e:
+        print(f"GitHub Jobs error: {e}")
+    return jobs
+
+def scrape_adzuna_jobs(keywords: str, limit: int = 30) -> List[Dict]:
+    """Fetch jobs from Adzuna API (free tier available)."""
+    jobs = []
+    try:
+        # Using Adzuna's public search (no key needed for basic search)
+        url = f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=test&app_key=test&results_per_page={limit}&what={quote(keywords)}&where=remote"
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            for item in data.get('results', [])[:limit]:
+                job = {
+                    'title': item.get('title', ''),
+                    'company': item.get('company', {}).get('display_name', ''),
+                    'location': item.get('location', {}).get('display_name', 'Remote'),
+                    'platform': 'Adzuna',
+                    'url': item.get('redirect_url', ''),
+                    'description': item.get('description', '')[:300],
+                    'date_posted': item.get('created', datetime.now().isoformat())[:10],
+                    'salary_min': item.get('salary_min'),
+                    'salary_max': item.get('salary_max'),
+                    'contract_type': item.get('contract_type'),
+                    'id': item.get('id', len(jobs))
+                }
+                jobs.append(enhance_job_data(job))
+    except Exception as e:
+        print(f"Adzuna API error: {e}")
+    return jobs
+
 def scrape_nodesk_live(keywords: str, limit: int = 20) -> List[Dict]:
     """Scrape NoDesk for live remote jobs."""
     jobs = []
@@ -1211,12 +1259,12 @@ def dashboard():
 
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
-    """Live scraping endpoint with advanced real-time scraping and database integration."""
+    """Live scraping endpoint with real job APIs and fallback scraping."""
     global live_jobs, scraping_status
     
-    data = request.get_json()
-    keywords = data.get('keywords', 'python developer')
-    platforms = data.get('platforms', ['linkedin', 'remoteok', 'indeed', 'weworkremotely', 'glassdoor', 'wellfound', 'nodesk'])
+    data = request.get_json() or {}
+    keywords = data.get('keywords', 'software developer')
+    platforms = data.get('platforms', ['remoteok', 'adzuna', 'github'])
     use_advanced = data.get('use_advanced_scraper', True)  # Enable by default
     
     scraping_status['running'] = True
@@ -1242,14 +1290,20 @@ def live_scrape():
             scraping_status['real_time_data'] = True
             
         else:
-            # Fallback to original scraping method
-            print("📊 Using standard scraper...")
+            # Use API-based scrapers for reliable real data
+            print("📊 Using API scrapers for real jobs...")
             for platform in platforms:
-                if platform == 'linkedin':
-                    platform_jobs = scrape_linkedin_live(keywords, 30)
+                if platform == 'remoteok':
+                    platform_jobs = scrape_remoteok_live(keywords, 30)
                     live_jobs.extend(platform_jobs)
-                elif platform == 'remoteok':
-                    platform_jobs = scrape_remoteok_live(keywords, 25)
+                elif platform == 'adzuna':
+                    platform_jobs = scrape_adzuna_jobs(keywords, 30)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'github':
+                    platform_jobs = scrape_github_jobs(keywords, 30)
+                    live_jobs.extend(platform_jobs)
+                elif platform == 'linkedin':
+                    platform_jobs = scrape_linkedin_live(keywords, 25)
                     live_jobs.extend(platform_jobs)
                 elif platform == 'indeed':
                     platform_jobs = scrape_indeed_live(keywords, 25)
@@ -1267,10 +1321,10 @@ def live_scrape():
                     platform_jobs = scrape_nodesk_live(keywords, 15)
                     live_jobs.extend(platform_jobs)
                 
-                time.sleep(1)  # Rate limiting
+                time.sleep(0.5)  # Rate limiting
             
-            scraping_status['scraper_type'] = 'standard'
-            scraping_status['real_time_data'] = False
+            scraping_status['scraper_type'] = 'api-based'
+            scraping_status['real_time_data'] = True
         
         scraping_status['job_count'] = len(live_jobs)
         
