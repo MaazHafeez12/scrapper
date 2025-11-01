@@ -1484,7 +1484,12 @@ def live_jobs_endpoint():
     search = request.args.get('search', '').lower()
     limit = int(request.args.get('limit', 50))
     
-    # Try to get jobs from database first
+    # Return in-memory jobs first (most recent scrape results)
+    if live_jobs:
+        print(f"📤 Returning {len(live_jobs)} jobs from memory")
+        return jsonify(live_jobs[:limit])
+    
+    # Fallback to database if no in-memory jobs
     if db and hasattr(db, 'get_jobs'):
         try:
             db_jobs = db.get_jobs(limit=limit, search=search if search else None)
