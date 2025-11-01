@@ -19,6 +19,15 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import JobDatabase
 
+# Import contact discovery module
+try:
+    from contact_discovery import contact_discovery
+    CONTACT_DISCOVERY_ENABLED = True
+except ImportError as e:
+    print(f"Contact discovery module not available: {e}")
+    CONTACT_DISCOVERY_ENABLED = False
+    contact_discovery = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -953,6 +962,79 @@ def business_leads_endpoint():
         'database_enabled': False
     })
 
+@app.route('/api/discover-contacts', methods=['POST'])
+def discover_contacts():
+    """Discover contact information for a company."""
+    if not CONTACT_DISCOVERY_ENABLED:
+        return jsonify({
+            'success': False,
+            'message': 'Contact discovery module not available'
+        })
+    
+    data = request.get_json()
+    company_name = data.get('company_name')
+    job_title = data.get('job_title', '')
+    job_url = data.get('job_url', '')
+    
+    if not company_name:
+        return jsonify({
+            'success': False,
+            'message': 'Company name is required'
+        })
+    
+    try:
+        # Discover contacts
+        contact_results = contact_discovery.discover_contacts(company_name, job_title, job_url)
+        
+        # Save contact information to database if available
+        if db and contact_results.get('confidence_score', 0) > 0:
+            try:
+                # Find corresponding job in database
+                jobs = db.search_jobs(keywords=job_title, limit=100)
+                matching_job = next((job for job in jobs if job.get('company', '').lower() == company_name.lower()), None)
+                
+                if matching_job:
+                    # Save contacts to job record
+                    all_emails = contact_results.get('direct_emails', []) + [
+                        guess['email'] for guess in contact_results.get('guessed_emails', [])
+                    ]
+                    
+                    contact_sources = {}
+                    for email in contact_results.get('direct_emails', []):
+                        contact_sources[email] = {'source': 'website_scrape', 'verified': True, 'type': 'extracted'}
+                    
+                    for guess in contact_results.get('guessed_emails', []):
+                        email = guess['email']
+                        contact_sources[email] = {
+                            'source': 'name_pattern', 
+                            'verified': False, 
+                            'type': 'guessed',
+                            'confidence': guess.get('confidence', 0.5)
+                        }
+                    
+                    if hasattr(db, 'save_job_contacts'):
+                        db.save_job_contacts(
+                            matching_job['id'], 
+                            all_emails, 
+                            contact_sources, 
+                            contact_results.get('domain')
+                        )
+                        
+            except Exception as e:
+                print(f"Error saving contact info to database: {e}")
+        
+        return jsonify({
+            'success': True,
+            'contacts': contact_results,
+            'database_saved': db is not None
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error discovering contacts: {str(e)}'
+        })
+
 @app.route('/api/lead-analysis/<company>')
 def lead_analysis(company):
     """Get detailed lead analysis and scoring breakdown."""
@@ -1277,8 +1359,8 @@ def demo():
                 return 'score-low';
             }
 
-            // Business development functions
-            function researchCompany(company, jobTitle) {
+            // Business development functions with contact discovery
+            async function researchCompany(company, jobTitle) {
                 const researchSteps = `🔍 COMPANY RESEARCH: ${company}
 
 QUICK RESEARCH CHECKLIST:
@@ -1303,7 +1385,8 @@ NEXT STEPS:
 5. Identify decision makers (CTO, Head of Engineering, HR)`;
 
                 // Copy research plan to clipboard
-                navigator.clipboard.writeText(researchSteps).then(() => {
+                try {
+                    await navigator.clipboard.writeText(researchSteps);
                     alert(`🔍 Research plan for ${company} copied to clipboard!
                     
 The research checklist will help you:
@@ -1313,7 +1396,7 @@ The research checklist will help you:
 • Position your services effectively
 
 Start with their website and LinkedIn page.`);
-                }).catch(() => {
+                } catch (err) {
                     alert(`Research ${company} for ${jobTitle}:
                     
 1. Google: "${company} official website"
@@ -1321,11 +1404,112 @@ Start with their website and LinkedIn page.`);
 3. Check their careers page
 4. Look for engineering team contacts
 5. Identify decision makers (CTO, Engineering Manager)`);
-                });
+                }
             }
 
-            function contactCompany(company, jobTitle) {
-                const contactInfo = `📧 CONTACT STRATEGY: ${company}
+            async function contactCompany(company, jobTitle) {
+                // Show loading state
+                const button = event.target;
+                const originalText = button.textContent;
+                button.textContent = '🔍 Finding Contacts...';
+                button.disabled = true;
+
+                try {
+                    // Try automated contact discovery first
+                    const response = await fetch('/api/discover-contacts', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            company_name: company,
+                            job_title: jobTitle
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success && result.contacts) {
+                        const contacts = result.contacts;
+                        let contactInfo = `📧 AUTOMATED CONTACT DISCOVERY: ${company}
+
+🎯 FOUND CONTACT INFORMATION:
+${contacts.domain ? `🌐 Company Website: https://${contacts.domain}` : ''}
+${contacts.confidence_score ? `✅ Discovery Confidence: ${contacts.confidence_score}%` : ''}
+
+`;
+
+                        // Add direct emails if found
+                        if (contacts.direct_emails && contacts.direct_emails.length > 0) {
+                            contactInfo += `📧 VERIFIED EMAIL ADDRESSES:
+${contacts.direct_emails.map(email => `• ${email}`).join('\\n')}
+
+`;
+                        }
+
+                        // Add email guesses for decision makers
+                        if (contacts.guessed_emails && contacts.guessed_emails.length > 0) {
+                            const decisionMakerEmails = contacts.guessed_emails
+                                .filter(guess => guess.is_decision_maker)
+                                .sort((a, b) => b.confidence - a.confidence);
+
+                            if (decisionMakerEmails.length > 0) {
+                                contactInfo += `👨‍💼 DECISION MAKER CONTACTS (Likely):
+${decisionMakerEmails.slice(0, 5).map(guess => 
+    `• ${guess.email} (${guess.name}, ${guess.title}) - ${Math.round(guess.confidence * 100)}% confidence`
+                                ).join('\\n')}
+
+`;
+                            }
+                        }
+
+                        // Add LinkedIn profiles
+                        if (contacts.linkedin_profiles && contacts.linkedin_profiles.length > 0) {
+                            contactInfo += `🔗 LINKEDIN PROFILES:
+${contacts.linkedin_profiles.slice(0, 3).map(profile => `• ${profile}`).join('\\n')}
+
+`;
+                        }
+
+                        contactInfo += `📋 OUTREACH STRATEGY:
+1. Start with verified emails (highest success rate)
+2. Connect with decision makers on LinkedIn first
+3. Use warm introduction through mutual connections
+4. Mention their ${jobTitle} hiring as conversation starter
+
+💡 PROFESSIONAL MESSAGE TEMPLATE:
+"Hi [Name],
+
+I noticed ${company} is actively hiring for ${jobTitle} roles. As a tech solutions partner, we help companies like yours scale engineering teams faster with dedicated developers and project-based technical expertise.
+
+Instead of just filling positions, we offer:
+• Immediate technical capacity
+• Specialized skill sets for specific projects
+• Flexible engagement models
+
+Would you be open to a brief conversation about how we could support ${company}'s technology initiatives?
+
+Best regards,
+[Your Name]"`;
+
+                        // Copy to clipboard
+                        await navigator.clipboard.writeText(contactInfo);
+                        alert(`📧 Automated contact discovery complete for ${company}!
+
+Found:
+• ${contacts.direct_emails ? contacts.direct_emails.length : 0} verified emails
+• ${contacts.guessed_emails ? contacts.guessed_emails.length : 0} contact guesses
+• ${contacts.linkedin_profiles ? contacts.linkedin_profiles.length : 0} LinkedIn profiles
+• ${contacts.decision_makers ? contacts.decision_makers.length : 0} decision makers
+
+Full contact strategy copied to clipboard!`);
+                    } else {
+                        throw new Error('Automated discovery failed');
+                    }
+
+                } catch (error) {
+                    console.error('Contact discovery error:', error);
+                    
+                    // Fallback to manual strategy
+                    const manualContactInfo = `📧 CONTACT STRATEGY: ${company}
 
 STEP 1: FIND DECISION MAKERS
 • Search LinkedIn: "${company}" + "CTO" or "Head of Engineering"
@@ -1363,9 +1547,10 @@ STEP 4: FOLLOW-UP PLAN
 • Provide case studies or portfolio
 • Offer free consultation or pilot project`;
 
-                navigator.clipboard.writeText(contactInfo).then(() => {
-                    alert(`📧 Complete contact strategy for ${company} copied!
-                    
+                    try {
+                        await navigator.clipboard.writeText(manualContactInfo);
+                        alert(`📧 Manual contact strategy for ${company} copied!
+                        
 This includes:
 ✅ How to find decision makers
 ✅ Best contact methods
@@ -1373,15 +1558,20 @@ This includes:
 ✅ Follow-up strategy
 
 Start with LinkedIn to find their CTO or Engineering Manager.`);
-                }).catch(() => {
-                    alert(`Contact ${company} about ${jobTitle}:
-                    
+                    } catch (err) {
+                        alert(`Contact ${company} about ${jobTitle}:
+                        
 1. Find their CTO/Engineering Manager on LinkedIn
 2. Send professional connection request
 3. Mention their ${jobTitle} hiring
 4. Offer tech services as partnership
 5. Follow up with portfolio/case studies`);
-                });
+                    }
+                } finally {
+                    // Restore button state
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }
             }
 
             function saveAsLead(company, jobTitle, leadScore) {
