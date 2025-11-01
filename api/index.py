@@ -712,6 +712,7 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
         
         if response.status_code == 200:
             data = response.json()
+            print(f"✅ RemoteOK API returned {len(data)} total jobs")
             keywords_lower = keywords.lower()
             
             # Filter jobs by keywords and process
@@ -724,12 +725,19 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
                 if not isinstance(item, dict) or 'position' not in item:
                     continue
                 
-                # Check if keywords match
+                # Check if keywords match (flexible matching - any keyword word)
                 position = item.get('position', '').lower()
                 company = item.get('company', '').lower()
                 tags = ' '.join(item.get('tags', [])).lower()
                 
-                if keywords_lower in position or keywords_lower in company or keywords_lower in tags:
+                # Split keywords and check if any word matches
+                keyword_words = keywords_lower.split()
+                matches = any(
+                    word in position or word in company or word in tags 
+                    for word in keyword_words if len(word) > 2  # Skip short words
+                )
+                
+                if matches or keywords_lower in position or keywords_lower in company or keywords_lower in tags:
                     job = {
                         'title': item.get('position', 'Unknown Position'),
                         'company': item.get('company', 'Unknown Company'),
@@ -744,12 +752,47 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
                     }
                     jobs.append(enhance_job_data(job))
                     count += 1
+            
+            print(f"✅ RemoteOK: Found {len(jobs)} matching jobs for '{keywords}'")
                     
     except Exception as e:
-        print(f"Error scraping RemoteOK: {e}")
+        print(f"❌ Error scraping RemoteOK: {e}")
     
-    # If no jobs found, add some mock data for demo purposes
+    # If no jobs found with strict matching, return first N jobs from RemoteOK API
     if len(jobs) == 0:
+        print(f"⚠️ No keyword matches found, returning first {limit} RemoteOK jobs")
+        try:
+            url = "https://remoteok.com/api"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                count = 0
+                for item in data:
+                    if count >= limit:
+                        break
+                    if isinstance(item, dict) and 'position' in item:
+                        job = {
+                            'title': item.get('position', 'Unknown Position'),
+                            'company': item.get('company', 'Unknown Company'),
+                            'location': item.get('location', 'Remote'),
+                            'platform': 'RemoteOK',
+                            'url': item.get('url', f"https://remoteok.com/remote-jobs/{item.get('slug', '')}"),
+                            'description': item.get('description', '')[:300],
+                            'date_posted': item.get('date', datetime.now().strftime('%Y-%m-%d')),
+                            'salary_range': f"${item.get('salary_min', 0)}k - ${item.get('salary_max', 0)}k" if item.get('salary_min') else 'Not specified',
+                            'tags': item.get('tags', []),
+                            'id': item.get('id', count)
+                        }
+                        jobs.append(enhance_job_data(job))
+                        count += 1
+                print(f"✅ Returned {len(jobs)} RemoteOK jobs without keyword filter")
+        except Exception as e:
+            print(f"❌ Fallback RemoteOK fetch failed: {e}")
+    
+    # Last resort: mock data
+    if len(jobs) == 0:
+        print("⚠️ Using mock data as fallback")
         companies = ['TechCorp Remote', 'StartupXYZ', 'InnovateNow', 'CloudVegas', 'DataSync Inc', 'RemoteFirst Labs', 'NextGen Dev', 'ScaleBuilders']
         roles = [
             f'{keywords.title()} Developer', f'Senior {keywords.title()} Engineer', f'Lead {keywords.title()} Developer',
