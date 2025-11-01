@@ -181,6 +181,15 @@ except ImportError as e:
     WEBHOOK_ENABLED = False
     WebhookSystem = None
 
+# Import workflow automation module
+try:
+    from workflow_automation import WorkflowAutomation
+    WORKFLOW_ENABLED = True
+except ImportError as e:
+    print(f"Workflow automation module not available: {e}")
+    WORKFLOW_ENABLED = False
+    WorkflowAutomation = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -235,6 +244,14 @@ if WEBHOOK_ENABLED and db:
         webhook_system = WebhookSystem(db.connection)
     except Exception as e:
         print(f"Webhook system initialization error: {e}")
+
+# Initialize workflow automation
+workflow_automation = None
+if WORKFLOW_ENABLED and db:
+    try:
+        workflow_automation = WorkflowAutomation(db.connection)
+    except Exception as e:
+        print(f"Workflow automation initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4222,6 +4239,123 @@ def subscribe_to_events():
     
     result = webhook_system.create_event_subscription(data)
     return jsonify(result)
+
+# ===== ADVANCED WORKFLOW AUTOMATION BUILDER ENDPOINTS =====
+
+@app.route('/api/workflows/create', methods=['POST'])
+def create_automation_workflow():
+    """Create automation workflow."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'name' not in data or 'trigger_type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, name, trigger_type'}), 400
+    
+    result = workflow_automation.create_workflow(data)
+    return jsonify(result)
+
+@app.route('/api/workflows/execute/<workflow_id>', methods=['POST'])
+def execute_automation_workflow(workflow_id):
+    """Execute workflow."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json() or {}
+    result = workflow_automation.execute_workflow(
+        workflow_id=workflow_id,
+        trigger_data=data.get('trigger_data')
+    )
+    return jsonify(result)
+
+@app.route('/api/workflows/trigger', methods=['POST'])
+def create_workflow_trigger():
+    """Create workflow trigger."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json()
+    if 'workflow_id' not in data or 'type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: workflow_id, type'}), 400
+    
+    result = workflow_automation.create_trigger(data)
+    return jsonify(result)
+
+@app.route('/api/workflows/action', methods=['POST'])
+def add_workflow_action():
+    """Add action to workflow."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json()
+    if 'workflow_id' not in data or 'name' not in data or 'type' not in data:
+        return jsonify({'success': False, 'error': 'Missing: workflow_id, name, type'}), 400
+    
+    result = workflow_automation.add_action(data)
+    return jsonify(result)
+
+@app.route('/api/workflows/condition', methods=['POST'])
+def add_workflow_condition():
+    """Add conditional logic to workflow."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json()
+    required = ['workflow_id', 'node_id', 'operator', 'field', 'value']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing required fields: {required}'}), 400
+    
+    result = workflow_automation.add_condition(data)
+    return jsonify(result)
+
+@app.route('/api/workflows/template', methods=['POST'])
+def create_workflow_template():
+    """Create workflow template."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'workflow_config' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, workflow_config'}), 400
+    
+    result = workflow_automation.create_template(data)
+    return jsonify(result)
+
+@app.route('/api/workflows/template/<template_id>/use', methods=['POST'])
+def use_workflow_template(template_id):
+    """Create workflow from template."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id'}), 400
+    
+    result = workflow_automation.use_template(
+        template_id=template_id,
+        user_id=data['user_id'],
+        customizations=data.get('customizations')
+    )
+    return jsonify(result)
+
+@app.route('/api/workflows/analytics/<workflow_id>', methods=['GET'])
+def get_workflow_analytics(workflow_id):
+    """Get workflow analytics."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    analytics = workflow_automation.get_workflow_analytics(workflow_id)
+    return jsonify({'success': True, 'analytics': analytics})
+
+@app.route('/api/workflows/logs/<workflow_id>', methods=['GET'])
+def get_workflow_logs(workflow_id):
+    """Get workflow execution logs."""
+    if not WORKFLOW_ENABLED or not workflow_automation:
+        return jsonify({'success': False, 'error': 'Workflows not available'}), 503
+    
+    limit = int(request.args.get('limit', 50))
+    logs = workflow_automation.get_workflow_logs(workflow_id, limit)
+    return jsonify({'success': True, 'logs': logs})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
