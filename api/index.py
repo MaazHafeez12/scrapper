@@ -1232,9 +1232,9 @@ def scrape_linkedin_live(keywords: str, limit: int = 30) -> List[Dict]:
         'Remote - US', 'Remote - Global', 'Hybrid - SF Bay Area', 'Hybrid - NYC'
     ]
     
-    # Generate diverse LinkedIn-style jobs
+    # Generate diverse LinkedIn-style jobs (limited to avoid overwhelming real results)
     import random
-    for i in range(min(limit, 30)):
+    for i in range(min(limit, 5)):  # Reduced from 30 to 5 to prioritize real scraper results
         company = random.choice(linkedin_companies)
         role = random.choice(job_roles)
         location = random.choice(locations)
@@ -1979,7 +1979,7 @@ def demo():
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             keywords: keywords,
-                            platforms: ['linkedin', 'remoteok', 'indeed', 'weworkremotely', 'glassdoor', 'wellfound', 'nodesk']
+                            platforms: ['remoteok', 'adzuna', 'indeed', 'weworkremotely', 'wellfound', 'glassdoor', 'nodesk']
                         })
                     });
                     
