@@ -250,6 +250,17 @@ except ImportError as e:
     OptimizedQueryBuilder = None
     DatabaseMaintenanceService = None
 
+# Import background jobs
+try:
+    from background_jobs import BackgroundJobQueue, JobService, JobPriority
+    JOBS_ENABLED = True
+except ImportError as e:
+    print(f"Background jobs not available: {e}")
+    JOBS_ENABLED = False
+    BackgroundJobQueue = None
+    JobService = None
+    JobPriority = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -372,6 +383,16 @@ if DB_OPTIMIZATION_ENABLED and db:
         db_optimizer.create_indexes()
     except Exception as e:
         print(f"Database optimization initialization error: {e}")
+
+# Initialize background job queue
+job_queue = None
+job_service = None
+if JOBS_ENABLED:
+    try:
+        job_queue = BackgroundJobQueue(num_workers=3)
+        job_service = JobService(job_queue)
+    except Exception as e:
+        print(f"Background jobs initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -5053,6 +5074,154 @@ def get_maintenance_history():
     
     history = db_maintenance.get_maintenance_history()
     return jsonify({'success': True, 'history': history, 'count': len(history)})
+
+# ===== Background Job Queue Endpoints =====
+
+@app.route('/api/jobs/enqueue', methods=['POST'])
+def enqueue_job():
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    data = request.get_json()
+    if 'job_type' not in data or 'payload' not in data:
+        return jsonify({'success': False, 'error': 'Missing: job_type, payload'}), 400
+    
+    priority_str = data.get('priority', 'normal').upper()
+    priority = JobPriority[priority_str] if priority_str in JobPriority.__members__ else JobPriority.NORMAL
+    
+    job_id = job_queue.enqueue(data['job_type'], data['payload'], priority)
+    return jsonify({'success': True, 'job_id': job_id})
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+def get_job_status(job_id):
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    job = job_queue.get_job(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'Job not found'}), 404
+    
+    return jsonify({'success': True, 'job': job})
+
+@app.route('/api/jobs', methods=['GET'])
+def get_jobs_list():
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    status = request.args.get('status')
+    limit = int(request.args.get('limit', 50))
+    
+    jobs = job_queue.get_jobs(status, limit)
+    return jsonify({'success': True, 'jobs': jobs, 'count': len(jobs)})
+
+@app.route('/api/jobs/<job_id>/cancel', methods=['POST'])
+def cancel_job(job_id):
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    cancelled = job_queue.cancel_job(job_id)
+    if cancelled:
+        return jsonify({'success': True, 'message': 'Job cancelled'})
+    else:
+        return jsonify({'success': False, 'error': 'Job cannot be cancelled'}), 400
+
+@app.route('/api/jobs/<job_id>/retry', methods=['POST'])
+def retry_job(job_id):
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    retried = job_queue.retry_job(job_id)
+    if retried:
+        return jsonify({'success': True, 'message': 'Job retried'})
+    else:
+        return jsonify({'success': False, 'error': 'Job cannot be retried'}), 400
+
+@app.route('/api/jobs/stats', methods=['GET'])
+def get_job_stats():
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    stats = job_queue.get_queue_stats()
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/api/jobs/cleanup', methods=['POST'])
+def cleanup_jobs():
+    if not JOBS_ENABLED or not job_queue:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    data = request.get_json() or {}
+    max_age = data.get('max_age', 24)
+    
+    count = job_queue.cleanup_old_jobs(max_age)
+    return jsonify({'success': True, 'cleaned': count, 'max_age_hours': max_age})
+
+# Convenience endpoints for common job types
+
+@app.route('/api/jobs/schedule/email', methods=['POST'])
+def schedule_email_job():
+    if not JOBS_ENABLED or not job_service:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['to', 'subject', 'body']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    job_id = job_service.schedule_email(
+        data['to'], data['subject'], data['body'],
+        JobPriority[data.get('priority', 'NORMAL').upper()]
+    )
+    return jsonify({'success': True, 'job_id': job_id})
+
+@app.route('/api/jobs/schedule/export', methods=['POST'])
+def schedule_export_job():
+    if not JOBS_ENABLED or not job_service:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['entity', 'filters']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    job_id = job_service.schedule_export(
+        data['entity'], data['filters'], 
+        data.get('format', 'csv'),
+        JobPriority[data.get('priority', 'NORMAL').upper()]
+    )
+    return jsonify({'success': True, 'job_id': job_id})
+
+@app.route('/api/jobs/schedule/webhook', methods=['POST'])
+def schedule_webhook_job():
+    if not JOBS_ENABLED or not job_service:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['url', 'payload']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    job_id = job_service.schedule_webhook(
+        data['url'], data['payload'],
+        JobPriority[data.get('priority', 'HIGH').upper()]
+    )
+    return jsonify({'success': True, 'job_id': job_id})
+
+@app.route('/api/jobs/schedule/report', methods=['POST'])
+def schedule_report_job():
+    if not JOBS_ENABLED or not job_service:
+        return jsonify({'success': False, 'error': 'Jobs not enabled'}), 503
+    
+    data = request.get_json()
+    required = ['report_type', 'filters']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing fields: {required}'}), 400
+    
+    job_id = job_service.schedule_report(
+        data['report_type'], data['filters'],
+        data.get('format', 'pdf'),
+        JobPriority[data.get('priority', 'NORMAL').upper()]
+    )
+    return jsonify({'success': True, 'job_id': job_id})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
