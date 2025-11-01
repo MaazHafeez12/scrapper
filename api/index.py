@@ -199,6 +199,15 @@ except ImportError as e:
     TEAM_COLLAB_ENABLED = False
     TeamCollaboration = None
 
+# Import revenue intelligence module
+try:
+    from revenue_intelligence import RevenueIntelligence
+    REVENUE_ENABLED = True
+except ImportError as e:
+    print(f"Revenue intelligence module not available: {e}")
+    REVENUE_ENABLED = False
+    RevenueIntelligence = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -269,6 +278,14 @@ if TEAM_COLLAB_ENABLED and db:
         team_collab = TeamCollaboration(db.connection)
     except Exception as e:
         print(f"Team collaboration initialization error: {e}")
+
+# Initialize revenue intelligence
+revenue_intel = None
+if REVENUE_ENABLED and db:
+    try:
+        revenue_intel = RevenueIntelligence(db.connection)
+    except Exception as e:
+        print(f"Revenue intelligence initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -4496,6 +4513,109 @@ def search_team_workspace(workspace_id):
     
     results = team_collab.search_workspace(workspace_id, query)
     return jsonify(results)
+
+# ===== REVENUE INTELLIGENCE & FORECASTING ENDPOINTS =====
+
+@app.route('/api/revenue/deal', methods=['POST'])
+def create_revenue_deal():
+    """Create sales deal."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    data = request.get_json()
+    if 'name' not in data or 'company' not in data or 'owner_id' not in data or 'value' not in data:
+        return jsonify({'success': False, 'error': 'Missing: name, company, owner_id, value'}), 400
+    
+    result = revenue_intel.create_deal(data)
+    return jsonify(result)
+
+@app.route('/api/revenue/deal/<deal_id>/stage', methods=['PUT'])
+def update_revenue_deal_stage(deal_id):
+    """Update deal stage."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    data = request.get_json()
+    if 'stage' not in data:
+        return jsonify({'success': False, 'error': 'Missing: stage'}), 400
+    
+    result = revenue_intel.update_deal_stage(
+        deal_id=deal_id,
+        stage=data['stage'],
+        notes=data.get('notes', '')
+    )
+    return jsonify(result)
+
+@app.route('/api/revenue/forecast', methods=['GET'])
+def get_revenue_pipeline_forecast():
+    """Get pipeline revenue forecast."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    owner_id = request.args.get('owner_id')
+    period = request.args.get('period', 'quarter')
+    
+    forecast = revenue_intel.get_pipeline_forecast(owner_id, period)
+    return jsonify({'success': True, 'forecast': forecast})
+
+@app.route('/api/revenue/quota', methods=['POST'])
+def track_sales_quota():
+    """Track sales quota."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    data = request.get_json()
+    required = ['user_id', 'period', 'target_amount', 'start_date', 'end_date']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing required fields: {required}'}), 400
+    
+    result = revenue_intel.track_quota(data)
+    return jsonify(result)
+
+@app.route('/api/revenue/quota/<user_id>', methods=['GET'])
+def get_revenue_quota_performance(user_id):
+    """Get quota performance."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    period = request.args.get('period', 'current')
+    performance = revenue_intel.get_quota_performance(user_id, period)
+    return jsonify(performance)
+
+@app.route('/api/revenue/win-loss', methods=['POST'])
+def analyze_revenue_win_loss():
+    """Win/Loss analysis."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    data = request.get_json() or {}
+    analysis = revenue_intel.analyze_win_loss(data.get('filters'))
+    return jsonify({'success': True, 'analysis': analysis})
+
+@app.route('/api/revenue/predict', methods=['GET'])
+def predict_future_revenue():
+    """Predict future revenue."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    owner_id = request.args.get('owner_id')
+    months_ahead = int(request.args.get('months_ahead', 3))
+    
+    prediction = revenue_intel.predict_revenue(owner_id, months_ahead)
+    return jsonify({'success': True, 'prediction': prediction})
+
+@app.route('/api/revenue/analytics', methods=['POST'])
+def get_revenue_analytics():
+    """Get comprehensive revenue analytics."""
+    if not REVENUE_ENABLED or not revenue_intel:
+        return jsonify({'success': False, 'error': 'Revenue intelligence not available'}), 503
+    
+    data = request.get_json()
+    if 'date_range' not in data:
+        return jsonify({'success': False, 'error': 'Missing: date_range'}), 400
+    
+    analytics = revenue_intel.get_revenue_analytics(data['date_range'])
+    return jsonify({'success': True, 'analytics': analytics})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
