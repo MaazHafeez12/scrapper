@@ -58,3 +58,4 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
+.vercel

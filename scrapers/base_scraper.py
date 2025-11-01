@@ -94,9 +94,25 @@ class JobScraper(ABC):
                     print(f"[stealth] undetected-chromedriver failed: {e}. Falling back to standard ChromeDriver.")
             
             if not driver_initialized:
-                service = Service(ChromeDriverManager().install())
-                self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                driver_initialized = True
+                try:
+                    # Fix ChromeDriver path issue
+                    chromedriver_path = ChromeDriverManager().install()
+                    # Handle incorrect path from webdriver-manager
+                    if not chromedriver_path.endswith('.exe'):
+                        # Find the actual chromedriver.exe in the directory
+                        import os
+                        import glob
+                        driver_dir = os.path.dirname(chromedriver_path)
+                        exe_files = glob.glob(os.path.join(driver_dir, "**", "chromedriver.exe"), recursive=True)
+                        if exe_files:
+                            chromedriver_path = exe_files[0]
+                    
+                    service = Service(chromedriver_path)
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    driver_initialized = True
+                except Exception as e:
+                    print(f"ChromeDriver error: {e}")
+                    raise
             
             # Additional anti-detection (best-effort)
             try:
