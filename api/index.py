@@ -136,6 +136,15 @@ except ImportError as e:
     MULTICHANNEL_ENABLED = False
     multichannel = None
 
+# Import calendar integration module
+try:
+    from calendar_integration import CalendarIntegration
+    CALENDAR_ENABLED = True
+except ImportError as e:
+    print(f"Calendar integration module not available: {e}")
+    CALENDAR_ENABLED = False
+    CalendarIntegration = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -145,6 +154,14 @@ try:
 except Exception as e:
     print(f"Database initialization error: {e}")
     db = None
+
+# Initialize calendar integration
+calendar_integration = None
+if CALENDAR_ENABLED and db:
+    try:
+        calendar_integration = CalendarIntegration(db.connection)
+    except Exception as e:
+        print(f"Calendar integration initialization error: {e}")
 
 # Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
@@ -3447,6 +3464,123 @@ def recommend_best_channel():
         lead_engagement=data['lead_engagement']
     )
     return jsonify(result)
+
+# ===== CALENDAR INTEGRATION & MEETING SCHEDULER ENDPOINTS =====
+
+@app.route('/api/calendar/create-link', methods=['POST'])
+def create_scheduling_link():
+    """Create Calendly-style scheduling link."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'settings' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, settings'}), 400
+    
+    result = calendar_integration.create_scheduling_link(
+        user_id=data['user_id'],
+        settings=data['settings']
+    )
+    return jsonify(result)
+
+@app.route('/api/calendar/available-slots/<link_id>', methods=['POST'])
+def get_available_slots(link_id):
+    """Get available time slots for booking."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    data = request.get_json()
+    if 'start' not in data or 'end' not in data:
+        return jsonify({'success': False, 'error': 'Missing: start, end dates'}), 400
+    
+    slots = calendar_integration.get_available_slots(
+        link_id=link_id,
+        date_range={'start': data['start'], 'end': data['end']}
+    )
+    return jsonify({'success': True, 'slots': slots})
+
+@app.route('/api/calendar/book-meeting', methods=['POST'])
+def book_meeting():
+    """Book a meeting slot."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    data = request.get_json()
+    required = ['link_id', 'attendee_name', 'attendee_email', 'start_time', 'end_time']
+    if not all(field in data for field in required):
+        return jsonify({'success': False, 'error': f'Missing required fields: {required}'}), 400
+    
+    result = calendar_integration.book_meeting(
+        link_id=data['link_id'],
+        booking_data=data
+    )
+    return jsonify(result)
+
+@app.route('/api/calendar/reschedule/<meeting_id>', methods=['PUT'])
+def reschedule_meeting(meeting_id):
+    """Reschedule an existing meeting."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    data = request.get_json()
+    if 'start_time' not in data or 'end_time' not in data:
+        return jsonify({'success': False, 'error': 'Missing: start_time, end_time'}), 400
+    
+    result = calendar_integration.reschedule_meeting(
+        meeting_id=meeting_id,
+        new_time={'start_time': data['start_time'], 'end_time': data['end_time']}
+    )
+    return jsonify(result)
+
+@app.route('/api/calendar/cancel/<meeting_id>', methods=['DELETE'])
+def cancel_meeting(meeting_id):
+    """Cancel a meeting."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    data = request.get_json() or {}
+    result = calendar_integration.cancel_meeting(
+        meeting_id=meeting_id,
+        reason=data.get('reason', '')
+    )
+    return jsonify(result)
+
+@app.route('/api/calendar/upcoming', methods=['GET'])
+def get_upcoming_meetings():
+    """Get upcoming meetings."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    user_id = request.args.get('user_id')
+    days = int(request.args.get('days', 7))
+    
+    meetings = calendar_integration.get_upcoming_meetings(user_id=user_id, days=days)
+    return jsonify({'success': True, 'meetings': meetings})
+
+@app.route('/api/calendar/send-reminders', methods=['POST'])
+def send_meeting_reminders():
+    """Send reminders for upcoming meetings."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    result = calendar_integration.send_meeting_reminders()
+    return jsonify(result)
+
+@app.route('/api/calendar/analytics', methods=['POST'])
+def get_calendar_analytics():
+    """Get calendar analytics."""
+    if not CALENDAR_ENABLED or not calendar_integration:
+        return jsonify({'success': False, 'error': 'Calendar not available'}), 503
+    
+    data = request.get_json()
+    if 'user_id' not in data or 'date_range' not in data:
+        return jsonify({'success': False, 'error': 'Missing: user_id, date_range'}), 400
+    
+    analytics = calendar_integration.get_calendar_analytics(
+        user_id=data['user_id'],
+        date_range=data['date_range']
+    )
+    return jsonify({'success': True, 'analytics': analytics})
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':
