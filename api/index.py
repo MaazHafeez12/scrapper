@@ -28,6 +28,15 @@ except ImportError as e:
     CONTACT_DISCOVERY_ENABLED = False
     contact_discovery = None
 
+# Import outreach templates module
+try:
+    from outreach_templates import outreach_personalizer
+    OUTREACH_TEMPLATES_ENABLED = True
+except ImportError as e:
+    print(f"Outreach templates module not available: {e}")
+    OUTREACH_TEMPLATES_ENABLED = False
+    outreach_personalizer = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
@@ -962,6 +971,59 @@ def business_leads_endpoint():
         'database_enabled': False
     })
 
+@app.route('/api/generate-outreach', methods=['POST'])
+def generate_outreach():
+    """Generate personalized outreach templates for a lead."""
+    if not OUTREACH_TEMPLATES_ENABLED:
+        return jsonify({
+            'success': False,
+            'message': 'Outreach templates module not available'
+        })
+    
+    data = request.get_json()
+    
+    # Lead data
+    lead_data = {
+        'company': data.get('company'),
+        'title': data.get('job_title'),
+        'contact_name': data.get('contact_name', 'there'),
+        'contact_title': data.get('contact_title', ''),
+        'company_size': data.get('company_size', 'Growing'),
+        'tech_stack': data.get('tech_stack', 'modern technologies'),
+        'platform': data.get('platform', 'LinkedIn'),
+        'lead_score': data.get('lead_score', 50)
+    }
+    
+    # Sender data (you can make this configurable)
+    sender_data = {
+        'name': data.get('sender_name', 'Alex Johnson'),
+        'title': data.get('sender_title', 'Business Development Director'),
+        'company': data.get('sender_company', 'TechScale Solutions'),
+        'email': data.get('sender_email', 'alex@techscale.com'),
+        'phone': data.get('sender_phone', '+1 (555) 123-4567')
+    }
+    
+    try:
+        # Generate complete outreach sequence
+        sequence = outreach_personalizer.get_outreach_sequence(lead_data, sender_data)
+        
+        # Get template recommendations
+        recommendations = outreach_personalizer.get_template_recommendations(lead_data)
+        
+        return jsonify({
+            'success': True,
+            'outreach_sequence': sequence,
+            'recommendations': recommendations,
+            'total_templates': len(sequence),
+            'lead_data_quality': lead_data
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Error generating outreach templates: {str(e)}'
+        })
+
 @app.route('/api/discover-contacts', methods=['POST'])
 def discover_contacts():
     """Discover contact information for a company."""
@@ -1155,6 +1217,16 @@ def demo():
             .score-breakdown { font-size: 0.75rem; margin-top: 0.5rem; }
             .score-breakdown details { margin-top: 0.25rem; }
             .score-breakdown summary { cursor: pointer; color: #667eea; font-weight: 500; }
+            .btn-outreach { background: #9f7aea; color: white; padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.875rem; }
+            .btn-outreach:hover { background: #805ad5; }
+            .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
+            .modal-content { background: white; margin: 2% auto; padding: 2rem; width: 90%; max-width: 800px; border-radius: 12px; max-height: 90vh; overflow-y: auto; }
+            .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+            .outreach-template { background: #f8fafc; padding: 1rem; margin: 1rem 0; border-radius: 8px; border-left: 4px solid #667eea; }
+            .template-header { font-weight: bold; color: #667eea; margin-bottom: 0.5rem; }
+            .template-subject { font-weight: 600; margin-bottom: 0.5rem; background: #e2e8f0; padding: 0.5rem; border-radius: 4px; }
+            .template-body { white-space: pre-wrap; font-family: monospace; font-size: 0.875rem; line-height: 1.4; }
+            .copy-template { background: #48bb78; color: white; padding: 0.25rem 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.5rem; }
         </style>
     </head>
     <body>
@@ -1211,6 +1283,17 @@ def demo():
                 <h2>💼 Market Opportunities</h2>
                 <div id="liveJobs">
                     <p>No active search. Click "Find Business Opportunities" to discover companies hiring for tech roles.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Outreach Templates Modal -->
+        <div id="outreachModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeOutreachModal()">&times;</span>
+                <h2>📧 Professional Outreach Templates</h2>
+                <div id="outreachContent">
+                    <p>Generating personalized outreach sequence...</p>
                 </div>
             </div>
         </div>
@@ -1595,6 +1678,152 @@ Position: ${jobTitle}
 Status: Ready for outreach
 
 Tip: They're actively hiring, making this an ideal time to propose your tech services.`);
+            }
+
+            // Outreach Template Functions
+            async function generateOutreach(company, jobTitle, companySize, techStack, leadScore) {
+                document.getElementById('outreachModal').style.display = 'block';
+                document.getElementById('outreachContent').innerHTML = '<p>🔄 Generating personalized outreach sequence...</p>';
+
+                try {
+                    const response = await fetch('/api/generate-outreach', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            company: company,
+                            job_title: jobTitle,
+                            company_size: companySize || 'Growing',
+                            tech_stack: techStack || 'modern technologies',
+                            lead_score: leadScore || 50,
+                            platform: 'LinkedIn'
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        displayOutreachSequence(result.outreach_sequence, result.recommendations, company);
+                    } else {
+                        throw new Error(result.message || 'Failed to generate outreach');
+                    }
+
+                } catch (error) {
+                    console.error('Outreach generation error:', error);
+                    document.getElementById('outreachContent').innerHTML = `
+                        <p>❌ Error generating outreach templates. Falling back to manual templates...</p>
+                        <div class="outreach-template">
+                            <div class="template-header">📧 Manual Outreach Template</div>
+                            <div class="template-subject">Partnership Opportunity - ${company} Technology Initiatives</div>
+                            <div class="template-body">Hi there,
+
+I noticed ${company} is actively hiring for ${jobTitle} roles, which suggests exciting growth in your technology team.
+
+I'm reaching out because we specialize in providing dedicated development teams and technical solutions that complement in-house engineering efforts.
+
+Would you be open to a brief conversation about how we could support ${company}'s technology initiatives?
+
+Best regards,
+[Your Name]</div>
+                            <button class="copy-template" onclick="copyToClipboard(this.previousElementSibling.textContent)">📋 Copy Template</button>
+                        </div>
+                    `;
+                }
+            }
+
+            function displayOutreachSequence(sequence, recommendations, company) {
+                let html = `
+                    <div style="margin-bottom: 1rem;">
+                        <h3>🎯 Outreach Strategy for ${company}</h3>
+                        <p><strong>Total Templates:</strong> ${sequence.length} | <strong>Sequence Duration:</strong> ~2 months</p>
+                    </div>
+                `;
+
+                if (recommendations && recommendations.length > 0) {
+                    html += `
+                        <div style="background: #e6fffa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                            <h4>💡 Strategy Recommendations:</h4>
+                            ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                        </div>
+                    `;
+                }
+
+                sequence.forEach((template, index) => {
+                    const typeEmoji = {
+                        'initial': '🎯',
+                        'follow_up': '🔄',
+                        'value_add': '💎',
+                        'final': '🏁'
+                    };
+
+                    html += `
+                        <div class="outreach-template">
+                            <div class="template-header">
+                                ${typeEmoji[template.template_type] || '📧'} ${template.template_name}
+                                <span style="float: right; font-size: 0.875rem; color: #666;">
+                                    ${index === 0 ? 'Send Now' : `Send in ${template.follow_up_days} days`}
+                                </span>
+                            </div>
+                            <div class="template-subject">Subject: ${template.subject}</div>
+                            <div class="template-body">${template.body}</div>
+                            <div style="margin-top: 0.5rem; font-size: 0.875rem; color: #666;">
+                                <strong>Personalization Score:</strong> ${template.personalization_score}% | 
+                                <strong>Follow-up Date:</strong> ${template.follow_up_date}
+                            </div>
+                            <button class="copy-template" onclick="copyTemplate('${template.subject}', \`${template.body.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`)">📋 Copy Template</button>
+                        </div>
+                    `;
+                });
+
+                html += `
+                    <div style="margin-top: 2rem; padding: 1rem; background: #f0f9ff; border-radius: 8px;">
+                        <h4>📊 Outreach Best Practices:</h4>
+                        <ul>
+                            <li>Send initial email on Tuesday-Thursday, 9-11 AM</li>
+                            <li>Follow up consistently but not aggressively</li>
+                            <li>Always provide value in each touchpoint</li>
+                            <li>Personalize based on company news and updates</li>
+                            <li>Track responses and adjust strategy accordingly</li>
+                        </ul>
+                    </div>
+                `;
+
+                document.getElementById('outreachContent').innerHTML = html;
+            }
+
+            function copyTemplate(subject, body) {
+                const fullTemplate = `Subject: ${subject}
+
+${body}`;
+                
+                copyToClipboard(fullTemplate);
+                alert('📧 Template copied to clipboard! Ready to paste into your email client.');
+            }
+
+            function copyToClipboard(text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    console.log('Text copied to clipboard');
+                }).catch(err => {
+                    console.error('Failed to copy text: ', err);
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                });
+            }
+
+            function closeOutreachModal() {
+                document.getElementById('outreachModal').style.display = 'none';
+            }
+
+            // Close modal when clicking outside
+            window.onclick = function(event) {
+                const modal = document.getElementById('outreachModal');
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                }
             }
 
             // Load initial data
