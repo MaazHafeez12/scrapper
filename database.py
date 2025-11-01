@@ -619,3 +619,180 @@ class JobDatabase:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.close()
+
+    # Business Intelligence Methods
+    def save_business_lead(self, lead_data: Dict) -> bool:
+        """Save business lead to database."""
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+            
+            # First ensure business_leads table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS business_leads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    location TEXT,
+                    platform TEXT NOT NULL,
+                    lead_score INTEGER DEFAULT 0,
+                    company_size TEXT,
+                    technologies TEXT,
+                    contact_potential TEXT,
+                    job_url TEXT,
+                    date_found TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    contact_status TEXT DEFAULT 'New',
+                    notes TEXT,
+                    UNIQUE(company, title, platform)
+                )
+            ''')
+            
+            # Convert technologies list to JSON string
+            technologies = json.dumps(lead_data.get('technologies', []))
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO business_leads 
+                (company, title, location, platform, lead_score, company_size,
+                 technologies, contact_potential, job_url, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                lead_data.get('company'),
+                lead_data.get('title'),
+                lead_data.get('location'),
+                lead_data.get('platform'),
+                lead_data.get('lead_score', 0),
+                lead_data.get('company_size'),
+                technologies,
+                lead_data.get('contact_potential'),
+                lead_data.get('job_url'),
+                lead_data.get('notes', '')
+            ))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error saving business lead: {e}")
+            return False
+
+    def get_business_leads(self, limit: int = 50, min_score: int = 0) -> List[Dict]:
+        """Retrieve business leads from database."""
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+            
+            # First ensure table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS business_leads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    location TEXT,
+                    platform TEXT NOT NULL,
+                    lead_score INTEGER DEFAULT 0,
+                    company_size TEXT,
+                    technologies TEXT,
+                    contact_potential TEXT,
+                    job_url TEXT,
+                    date_found TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    contact_status TEXT DEFAULT 'New',
+                    notes TEXT,
+                    UNIQUE(company, title, platform)
+                )
+            ''')
+            
+            cursor.execute('''
+                SELECT * FROM business_leads 
+                WHERE lead_score >= ? 
+                ORDER BY lead_score DESC, date_found DESC 
+                LIMIT ?
+            ''', (min_score, limit))
+            
+            rows = cursor.fetchall()
+            leads = []
+            
+            for row in rows:
+                lead = dict(row)
+                # Parse technologies JSON back to list
+                try:
+                    lead['technologies'] = json.loads(lead['technologies'] or '[]')
+                except:
+                    lead['technologies'] = []
+                leads.append(lead)
+            
+            return leads
+        except Exception as e:
+            print(f"Error retrieving business leads: {e}")
+            return []
+
+    def save_job(self, job_data: Dict) -> bool:
+        """Save job data to database using existing structure."""
+        try:
+            # Use existing insert_job method with some adaptation
+            job_hash = self.generate_job_hash(job_data)
+            existing_id = self.job_exists(job_hash)
+            
+            if existing_id:
+                self.update_job_last_seen(existing_id)
+                return True
+            else:
+                self.insert_job(job_data)
+                return True
+        except Exception as e:
+            print(f"Error saving job: {e}")
+            return False
+
+    def get_jobs(self, limit: int = 50, search: str = None, platform: str = None) -> List[Dict]:
+        """Get jobs with enhanced filtering."""
+        return self.search_jobs(keywords=search, platform=platform, limit=limit)
+
+    def get_stats(self) -> Dict:
+        """Get enhanced statistics including business leads."""
+        try:
+            stats = self.get_statistics()
+            
+            # Add business leads statistics
+            self.connect()
+            cursor = self.conn.cursor()
+            
+            # Check if business_leads table exists
+            cursor.execute('''
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='business_leads'
+            ''')
+            if cursor.fetchone():
+                # Total leads
+                cursor.execute("SELECT COUNT(*) as count FROM business_leads")
+                row = cursor.fetchone()
+                stats['total_leads'] = row['count'] if row else 0
+                
+                # High value leads (score >= 70)
+                cursor.execute("SELECT COUNT(*) as count FROM business_leads WHERE lead_score >= 70")
+                row = cursor.fetchone()
+                stats['high_value_leads'] = row['count'] if row else 0
+                
+                # Recent searches (last 7 days)
+                cursor.execute('''
+                    SELECT COUNT(*) as count FROM search_history 
+                    WHERE searched_at >= datetime('now', '-7 days')
+                ''')
+                row = cursor.fetchone()
+                stats['recent_searches'] = row['count'] if row else 0
+                
+                # Top platforms for leads
+                cursor.execute('''
+                    SELECT platform, COUNT(*) as count 
+                    FROM business_leads 
+                    GROUP BY platform 
+                    ORDER BY count DESC 
+                    LIMIT 5
+                ''')
+                stats['top_platforms'] = [dict(row) for row in cursor.fetchall()]
+            else:
+                stats['total_leads'] = 0
+                stats['high_value_leads'] = 0
+                stats['recent_searches'] = 0
+                stats['top_platforms'] = []
+            
+            return stats
+        except Exception as e:
+            print(f"Error getting enhanced stats: {e}")
+            return self.get_statistics()

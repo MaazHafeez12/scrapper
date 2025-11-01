@@ -13,16 +13,28 @@ import re
 import csv
 import io
 from collections import defaultdict
+import sys
+
+# Import database module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from database import JobDatabase
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
 
-# Live scraping storage (in-memory for serverless)
+# Initialize database
+try:
+    db = JobDatabase('business_leads.db')
+except Exception as e:
+    print(f"Database initialization error: {e}")
+    db = None
+
+# Live scraping storage (in-memory for serverless fallback)
 live_jobs = []
 scraping_status = {'running': False, 'last_search': None, 'job_count': 0}
 user_preferences = {'saved_searches': [], 'favorite_jobs': [], 'applied_jobs': []}
 
-# Business Intelligence for Lead Generation
+# Business Intelligence for Lead Generation (fallback)
 business_leads = []
 
 # Simplified Business Intelligence Functions
@@ -62,11 +74,46 @@ def extract_company_intelligence(job: Dict) -> Dict:
     }
 
 def enhance_job_data(job: Dict) -> Dict:
-    """Enhance job data with business intelligence."""
+    """Enhance job data with business intelligence and save to database."""
     try:
         # Add business intelligence
         business_intel = extract_company_intelligence(job)
         job.update(business_intel)
+        
+        # Save job to database if available
+        if db:
+            try:
+                # Prepare job data for database
+                job_data = {
+                    'title': job.get('title', 'Unknown'),
+                    'company': job.get('company', 'Unknown'),
+                    'location': job.get('location', 'Unknown'),
+                    'platform': job.get('platform', 'Unknown'),
+                    'url': job.get('url', ''),
+                    'description': job.get('description', ''),
+                    'salary_range': job.get('salary_range', ''),
+                    'experience_level': job.get('experience_level', ''),
+                    'employment_type': job.get('employment_type', ''),
+                    'date_posted': job.get('date_posted', datetime.now().strftime('%Y-%m-%d')),
+                    'keywords_used': scraping_status.get('last_search', '')
+                }
+                
+                # Generate hash for duplicate detection
+                job_hash = f"{job_data['title']}-{job_data['company']}-{job_data['platform']}".lower().strip()
+                
+                # Save using database method
+                if hasattr(db, 'save_job'):
+                    db.save_job(job_data)
+                else:
+                    # Use existing database structure
+                    existing_id = db.job_exists(job_hash)
+                    if existing_id:
+                        db.update_job_last_seen(existing_id)
+                    else:
+                        db.insert_job(job_data)
+                        
+            except Exception as e:
+                print(f"Error saving job to database: {e}")
         
         # Add to business leads if score is high enough
         if business_intel['lead_score'] >= 40:
@@ -83,11 +130,23 @@ def enhance_job_data(job: Dict) -> Dict:
                 'date_found': datetime.now().isoformat()
             }
             
-            # Avoid duplicates
-            existing = any(l['company'] == lead['company'] and l['title'] == lead['title'] 
-                          for l in business_leads)
-            if not existing:
-                business_leads.append(lead)
+            # Save to database if available
+            if db and hasattr(db, 'save_business_lead'):
+                try:
+                    db.save_business_lead(lead)
+                except Exception as e:
+                    print(f"Error saving business lead to database: {e}")
+                    # Fallback to in-memory storage
+                    existing = any(l['company'] == lead['company'] and l['title'] == lead['title'] 
+                                  for l in business_leads)
+                    if not existing:
+                        business_leads.append(lead)
+            else:
+                # Fallback to in-memory storage
+                existing = any(l['company'] == lead['company'] and l['title'] == lead['title'] 
+                              for l in business_leads)
+                if not existing:
+                    business_leads.append(lead)
         
         return job
     except Exception as e:
@@ -611,7 +670,7 @@ def dashboard():
 
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
-    """Live scraping endpoint with expanded platform coverage."""
+    """Live scraping endpoint with expanded platform coverage and database integration."""
     global live_jobs, scraping_status
     
     data = request.get_json()
@@ -625,6 +684,8 @@ def live_scrape():
     live_jobs.clear()
     
     try:
+        total_leads_before = len(business_leads) if not db else 0
+        
         # Scrape from all available platforms with higher limits
         for platform in platforms:
             if platform == 'linkedin':
@@ -653,6 +714,19 @@ def live_scrape():
         
         scraping_status['job_count'] = len(live_jobs)
         
+        # Save search history to database
+        if db and hasattr(db, 'save_search_history'):
+            try:
+                total_leads_after = len(business_leads) if not db else 0
+                if hasattr(db, 'get_business_leads'):
+                    db_leads = db.get_business_leads(limit=1000)
+                    total_leads_after = len(db_leads)
+                
+                leads_generated = max(0, total_leads_after - total_leads_before)
+                db.save_search_history(keywords, platforms, len(live_jobs), leads_generated)
+            except Exception as e:
+                print(f"Error saving search history: {e}")
+        
     except Exception as e:
         print(f"Error in live scraping: {e}")
     finally:
@@ -661,7 +735,8 @@ def live_scrape():
     return jsonify({
         'success': True,
         'jobs_found': len(live_jobs),
-        'platforms_scraped': platforms
+        'platforms_scraped': platforms,
+        'database_enabled': db is not None
     })
 
 @app.route('/api/scraping-status')
@@ -671,10 +746,29 @@ def scraping_status_endpoint():
 
 @app.route('/api/live-jobs')
 def live_jobs_endpoint():
-    """Get live scraped jobs."""
+    """Get live scraped jobs with database integration."""
     search = request.args.get('search', '').lower()
     limit = int(request.args.get('limit', 50))
     
+    # Try to get jobs from database first
+    if db and hasattr(db, 'get_jobs'):
+        try:
+            db_jobs = db.get_jobs(limit=limit, search=search if search else None)
+            if db_jobs:
+                # Convert database jobs to the expected format
+                formatted_jobs = []
+                for job in db_jobs:
+                    # Add business intelligence if not present
+                    if 'lead_score' not in job:
+                        enhanced_job = enhance_job_data(job)
+                        formatted_jobs.append(enhanced_job)
+                    else:
+                        formatted_jobs.append(job)
+                return jsonify(formatted_jobs)
+        except Exception as e:
+            print(f"Error getting jobs from database: {e}")
+    
+    # Fallback to in-memory storage
     filtered_jobs = live_jobs
     
     if search:
@@ -689,24 +783,71 @@ def live_jobs_endpoint():
 
 @app.route('/api/business-leads')
 def business_leads_endpoint():
-    """Get business leads for lead generation."""
+    """Get business leads for lead generation with database integration."""
+    min_score = int(request.args.get('min_score', 40))
+    limit = int(request.args.get('limit', 50))
+    
+    # Try to get leads from database first
+    if db and hasattr(db, 'get_business_leads'):
+        try:
+            db_leads = db.get_business_leads(limit=limit, min_score=min_score)
+            if db_leads:
+                high_value_leads = len([l for l in db_leads if l.get('lead_score', 0) >= 70])
+                platforms_tracked = list(set(l.get('platform', 'Unknown') for l in db_leads))
+                
+                return jsonify({
+                    'leads': db_leads,
+                    'total_leads': len(db_leads),
+                    'high_value_leads': high_value_leads,
+                    'platforms_tracked': platforms_tracked,
+                    'database_enabled': True
+                })
+        except Exception as e:
+            print(f"Error getting business leads from database: {e}")
+    
+    # Fallback to in-memory storage
+    filtered_leads = [l for l in business_leads if l.get('lead_score', 0) >= min_score]
+    limited_leads = filtered_leads[-limit:] if len(filtered_leads) > limit else filtered_leads
+    
     return jsonify({
-        'leads': business_leads[-50:],  # Last 50 leads
+        'leads': limited_leads,
         'total_leads': len(business_leads),
-        'high_value_leads': len([l for l in business_leads if l['lead_score'] >= 70]),
-        'platforms_tracked': list(set(l['platform'] for l in business_leads))
+        'high_value_leads': len([l for l in business_leads if l.get('lead_score', 0) >= 70]),
+        'platforms_tracked': list(set(l.get('platform', 'Unknown') for l in business_leads)),
+        'database_enabled': False
     })
 
 @app.route('/api/stats')
 def stats():
-    """Get dashboard statistics."""
+    """Get dashboard statistics with database integration."""
+    # Try to get stats from database first
+    if db and hasattr(db, 'get_stats'):
+        try:
+            db_stats = db.get_stats()
+            if db_stats:
+                return jsonify({
+                    'total_jobs': db_stats.get('total_jobs', 0),
+                    'total_leads': db_stats.get('total_leads', 0),
+                    'high_value_leads': db_stats.get('high_value_leads', 0),
+                    'platforms_active': 7,
+                    'last_search': scraping_status.get('last_search', 'None'),
+                    'search_status': 'Running' if scraping_status.get('running') else 'Ready',
+                    'database_enabled': True,
+                    'recent_searches': db_stats.get('recent_searches', 0),
+                    'top_platforms': db_stats.get('top_platforms', [])
+                })
+        except Exception as e:
+            print(f"Error getting stats from database: {e}")
+    
+    # Fallback to in-memory statistics
     return jsonify({
         'total_jobs': len(live_jobs),
         'total_leads': len(business_leads),
-        'high_value_leads': len([l for l in business_leads if l['lead_score'] >= 70]),
-        'platforms_active': 7,  # Updated to reflect 7 platforms including LinkedIn
+        'high_value_leads': len([l for l in business_leads if l.get('lead_score', 0) >= 70]),
+        'platforms_active': 7,
         'last_search': scraping_status.get('last_search', 'None'),
-        'search_status': 'Running' if scraping_status.get('running') else 'Ready'
+        'search_status': 'Running' if scraping_status.get('running') else 'Ready',
+        'database_enabled': False
     })
 
 @app.route('/health')
