@@ -759,12 +759,15 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
             import random
             company = random.choice(companies)
             role = random.choice(roles)
+            company_slug = company.lower().replace(' ', '-')
+            role_slug = role.lower().replace(' ', '-')
             
             mock_jobs.append({
                 'title': role,
                 'company': company,
                 'location': 'Remote',
                 'platform': 'RemoteOK',
+                'url': f'https://remoteok.com/remote-jobs/{i}-{role_slug}-{company_slug}',
                 'description': f'{role} position with modern tech stack at {company}',
                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
                 'id': i + 1,
@@ -850,12 +853,14 @@ def scrape_indeed_live(keywords: str, limit: int = 20) -> List[Dict]:
             import random
             company = random.choice(companies)
             role = random.choice(roles)
+            job_id = random.randint(100000000, 999999999)
             
             mock_jobs.append({
                 'title': role,
                 'company': company,
                 'location': random.choice(['Remote', 'San Francisco, CA', 'New York, NY', 'Austin, TX']),
                 'platform': 'Indeed',
+                'url': f'https://www.indeed.com/viewjob?jk={job_id}',
                 'description': f'{role} with competitive benefits at {company}',
                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
                 'id': i + 1,
@@ -1235,11 +1240,17 @@ def scrape_linkedin_live(keywords: str, limit: int = 30) -> List[Dict]:
         tech_stacks = ['React', 'Node.js', 'Python', 'AWS', 'Docker', 'Kubernetes', 'TypeScript', 'GraphQL']
         benefits = ['Health Insurance', 'Stock Options', '401k Matching', 'Remote Work', 'Learning Budget']
         
+        # Generate LinkedIn-style URL
+        company_slug = company.lower().replace(' ', '-').replace('&', 'and')
+        role_slug = role.lower().replace(' ', '-')
+        job_id = random.randint(1000000000, 9999999999)
+        
         job = {
             'title': role,
             'company': company,
             'location': location,
             'platform': 'LinkedIn',
+            'url': f'https://www.linkedin.com/jobs/view/{job_id}',
             'description': f'{role} at {company}. Technologies: {", ".join(random.sample(tech_stacks, 3))}. Benefits: {", ".join(random.sample(benefits, 2))}.',
             'date_posted': datetime.now().strftime('%Y-%m-%d'),
             'id': len(jobs) + 1,
