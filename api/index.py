@@ -1335,14 +1335,6 @@ def live_scrape():
     
     live_jobs.clear()
     
-    # Clear old jobs from database to prevent stale data
-    if db and hasattr(db, 'clear_jobs'):
-        try:
-            db.clear_jobs()
-            print("🗑️ Cleared old jobs from database")
-        except Exception as e:
-            print(f"⚠️ Could not clear database: {e}")
-    
     try:
         total_leads_before = len(business_leads) if not db else 0
         
@@ -1377,9 +1369,10 @@ def live_scrape():
                     platform_jobs = scrape_github_jobs(keywords, 30)
                     live_jobs.extend(platform_jobs)
                 elif platform == 'linkedin':
-                    # DISABLED: LinkedIn only returns mock data
-                    print(f"⚠️ LinkedIn scraper skipped (mock data only)")
-                    pass
+                    print(f"🔍 Scraping LinkedIn...")
+                    platform_jobs = scrape_linkedin_live(keywords, 10)  # Limited to 10 to not overwhelm
+                    print(f"   Got {len(platform_jobs)} jobs from LinkedIn")
+                    live_jobs.extend(platform_jobs)
                 elif platform == 'indeed':
                     platform_jobs = scrape_indeed_live(keywords, 25)
                     live_jobs.extend(platform_jobs)
@@ -2048,7 +2041,7 @@ def demo():
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             keywords: keywords,
-                            platforms: ['remoteok', 'adzuna', 'indeed', 'weworkremotely', 'wellfound', 'glassdoor', 'nodesk']
+                            platforms: ['remoteok', 'adzuna', 'linkedin', 'indeed', 'weworkremotely', 'wellfound', 'glassdoor', 'nodesk']
                         })
                     });
                     
