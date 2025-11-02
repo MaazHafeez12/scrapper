@@ -288,15 +288,29 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         keywords: keywords,
-                        platforms: ['remoteok', 'adzuna', 'github']
+                        platforms: ['remoteok', 'adzuna', 'linkedin', 'indeed', 'weworkremotely']
                     })
                 });
                 
                 const result = await response.json();
                 
-                if (result.success) {
-                    showStatus(`✅ Found ${result.jobs_found} jobs!`, 'success');
-                    await loadJobs();
+                console.log('Search result:', result);
+                console.log('Platforms scraped:', result.platforms_scraped);
+                console.log('Jobs found:', result.jobs_found);
+                
+                if (result.success && result.jobs) {
+                    currentJobs = result.jobs;  // Use jobs from response directly!
+                    showStatus(`✅ Found ${result.jobs_found} jobs from ${result.platforms_scraped.length} platforms!`, 'success');
+                    displayJobs(currentJobs);
+                    updateStats(currentJobs);
+                    
+                    // Show platform breakdown
+                    const platformCounts = {};
+                    currentJobs.forEach(job => {
+                        const p = job.platform || 'Unknown';
+                        platformCounts[p] = (platformCounts[p] || 0) + 1;
+                    });
+                    console.log('Platform breakdown:', platformCounts);
                 } else {
                     showStatus('❌ Search failed. Please try again.', 'error');
                 }
