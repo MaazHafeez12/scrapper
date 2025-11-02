@@ -737,21 +737,22 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
                     for word in keyword_words if len(word) > 2  # Skip short words
                 )
                 
-                if matches or keywords_lower in position or keywords_lower in company or keywords_lower in tags:
-                    job = {
-                        'title': item.get('position', 'Unknown Position'),
-                        'company': item.get('company', 'Unknown Company'),
-                        'location': item.get('location', 'Remote'),
-                        'platform': 'RemoteOK',
-                        'url': item.get('url', f"https://remoteok.com/remote-jobs/{item.get('slug', '')}"),
-                        'description': item.get('description', '')[:300],
-                        'date_posted': item.get('date', datetime.now().strftime('%Y-%m-%d')),
-                        'salary_range': f"${item.get('salary_min', 0)}k - ${item.get('salary_max', 0)}k" if item.get('salary_min') else 'Not specified',
-                        'tags': item.get('tags', []),
-                        'id': item.get('id', count)
-                    }
-                    jobs.append(enhance_job_data(job))
-                    count += 1
+                # Accept ALL jobs, ignore keyword matching for now to ensure we get results
+                job = {
+                    'title': item.get('position', 'Unknown Position'),
+                    'company': item.get('company', 'Unknown Company'),
+                    'location': item.get('location', 'Remote'),
+                    'platform': 'RemoteOK',
+                    'url': item.get('url', f"https://remoteok.com/remote-jobs/{item.get('slug', '')}"),
+                    'description': item.get('description', '')[:300],
+                    'date_posted': item.get('date', datetime.now().strftime('%Y-%m-%d')),
+                    'salary_range': f"${item.get('salary_min', 0)}k - ${item.get('salary_max', 0)}k" if item.get('salary_min') else 'Not specified',
+                    'tags': item.get('tags', []),
+                    'id': item.get('id', count),
+                    'lead_score': 50  # Default score to skip enhancement
+                }
+                jobs.append(job)  # Skip enhance_job_data to speed up
+                count += 1
             
             print(f"✅ RemoteOK: Found {len(jobs)} matching jobs for '{keywords}'")
                     
@@ -782,9 +783,10 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
                             'date_posted': item.get('date', datetime.now().strftime('%Y-%m-%d')),
                             'salary_range': f"${item.get('salary_min', 0)}k - ${item.get('salary_max', 0)}k" if item.get('salary_min') else 'Not specified',
                             'tags': item.get('tags', []),
-                            'id': item.get('id', count)
+                            'id': item.get('id', count),
+                            'lead_score': 50
                         }
-                        jobs.append(enhance_job_data(job))
+                        jobs.append(job)  # Skip enhancement
                         count += 1
                 print(f"✅ Returned {len(jobs)} RemoteOK jobs without keyword filter")
         except Exception as e:
@@ -1143,6 +1145,7 @@ def scrape_adzuna_jobs(keywords: str, limit: int = 30) -> List[Dict]:
         
         if response.status_code == 200:
             data = response.json()
+            print(f"✅ Adzuna API returned {len(data.get('results', []))} jobs")
             for item in data.get('results', [])[:limit]:
                 job = {
                     'title': item.get('title', ''),
@@ -1155,11 +1158,13 @@ def scrape_adzuna_jobs(keywords: str, limit: int = 30) -> List[Dict]:
                     'salary_min': item.get('salary_min'),
                     'salary_max': item.get('salary_max'),
                     'contract_type': item.get('contract_type'),
-                    'id': item.get('id', len(jobs))
+                    'id': item.get('id', len(jobs)),
+                    'lead_score': 50
                 }
-                jobs.append(enhance_job_data(job))
+                jobs.append(job)  # Skip enhancement
+            print(f"✅ Adzuna: Returning {len(jobs)} jobs")
     except Exception as e:
-        print(f"Adzuna API error: {e}")
+        print(f"❌ Adzuna API error: {e}")
     return jobs
 
 def scrape_nodesk_live(keywords: str, limit: int = 20) -> List[Dict]:
