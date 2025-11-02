@@ -1359,8 +1359,17 @@ def live_scrape():
         else:
             # Use API-based scrapers for reliable real data
             print(f"📊 Using API scrapers for real jobs. Platforms: {platforms}")
+            
+            # SIMPLIFIED: Just scrape RemoteOK first to test
+            print(f"🔍 Testing RemoteOK scraper...")
+            remoteok_jobs = scrape_remoteok_live(keywords, 20)
+            print(f"   RemoteOK returned {len(remoteok_jobs)} jobs")
+            print(f"   First job platform: {remoteok_jobs[0].get('platform') if remoteok_jobs else 'NONE'}")
+            live_jobs.extend(remoteok_jobs)
+            
             for platform in platforms:
                 if platform == 'remoteok':
+                    continue  # Already scraped above
                     print(f"🔍 Scraping RemoteOK...")
                     platform_jobs = scrape_remoteok_live(keywords, 30)
                     print(f"   Got {len(platform_jobs)} jobs from RemoteOK")
