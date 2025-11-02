@@ -1431,6 +1431,35 @@ def live_scrape():
         'real_time_data': scraping_status.get('real_time_data', False)
     })
 
+@app.route('/api/test-scrapers')
+def test_scrapers():
+    """Test each scraper individually to see which ones work."""
+    results = {}
+    keywords = 'software developer'
+    
+    # Test RemoteOK
+    try:
+        remoteok_jobs = scrape_remoteok_live(keywords, 5)
+        results['remoteok'] = {'count': len(remoteok_jobs), 'platforms': [j.get('platform') for j in remoteok_jobs]}
+    except Exception as e:
+        results['remoteok'] = {'error': str(e)}
+    
+    # Test Adzuna
+    try:
+        adzuna_jobs = scrape_adzuna_jobs(keywords, 5)
+        results['adzuna'] = {'count': len(adzuna_jobs), 'platforms': [j.get('platform') for j in adzuna_jobs]}
+    except Exception as e:
+        results['adzuna'] = {'error': str(e)}
+    
+    # Test LinkedIn
+    try:
+        linkedin_jobs = scrape_linkedin_live(keywords, 5)
+        results['linkedin'] = {'count': len(linkedin_jobs), 'platforms': [j.get('platform') for j in linkedin_jobs]}
+    except Exception as e:
+        results['linkedin'] = {'error': str(e)}
+    
+    return jsonify(results)
+
 @app.route('/api/scraping-status')
 def scraping_status_endpoint():
     """Get current scraping status."""
@@ -2046,6 +2075,20 @@ def demo():
                     });
                     
                     const result = await response.json();
+                    
+                    console.log('=== SCRAPE RESULT ===');
+                    console.log('Jobs found:', result.jobs_found);
+                    console.log('Platforms scraped:', result.platforms_scraped);
+                    console.log('Total jobs in response:', result.jobs ? result.jobs.length : 0);
+                    if (result.jobs) {
+                        const platformBreakdown = {};
+                        result.jobs.forEach(job => {
+                            const p = job.platform || 'Unknown';
+                            platformBreakdown[p] = (platformBreakdown[p] || 0) + 1;
+                        });
+                        console.log('Platform breakdown:', platformBreakdown);
+                    }
+                    console.log('=====================');
                     
                     if (result.success) {
                         statusDiv.innerHTML = `✅ Found ${result.jobs_found} opportunities across ${result.platforms_scraped.length} platforms`;
