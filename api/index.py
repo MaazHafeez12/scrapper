@@ -1904,6 +1904,147 @@ def live_jobs_endpoint():
     
     return jsonify(filtered_jobs[:limit])
 
+@app.route('/api/generate-leads', methods=['POST'])
+def generate_leads_endpoint():
+    """Generate leads from current live jobs, enrich, save, and return the list.
+    Request body:
+      - min_score: int (default 40)
+      - enrich: bool (default True)
+      - limit: int (default 200)
+    """
+    global business_leads
+    data = request.get_json() or {}
+    min_score = int(data.get('min_score', 40))
+    do_enrich = bool(data.get('enrich', True))
+    limit = int(data.get('limit', 200))
+
+    # Source jobs from in-memory latest scrape; if empty, optionally fallback to DB
+    jobs_source = list(live_jobs)
+    if not jobs_source and db and hasattr(db, 'get_jobs'):
+        try:
+            jobs_source = db.get_jobs(limit=limit)
+        except Exception as e:
+            print(f"Lead gen DB fallback error: {e}")
+
+    leads_out: List[Dict] = []
+    seen = set()
+
+    for job in jobs_source:
+        try:
+            # Compute or reuse intelligence
+            job_with_intel = job.copy()
+            if 'lead_score' not in job_with_intel:
+                job_with_intel = enhance_job_data(job_with_intel)
+            lead_score = int(job_with_intel.get('lead_score', 0))
+            if lead_score < min_score:
+                continue
+
+            company = job_with_intel.get('company', 'Unknown')
+            title = job_with_intel.get('title', 'Unknown')
+            platform = job_with_intel.get('platform', 'Unknown')
+            key = f"{company}|{title}|{platform}"
+            if key in seen:
+                continue
+
+            lead: Dict = {
+                'company': company,
+                'title': title,
+                'location': job_with_intel.get('location', ''),
+                'platform': platform,
+                'lead_score': lead_score,
+                'technologies': job_with_intel.get('technologies', []),
+                'company_size': job_with_intel.get('company_size', 'Unknown'),
+                'contact_potential': job_with_intel.get('contact_potential', ''),
+                'job_url': job_with_intel.get('url') or job_with_intel.get('original_url') or generate_working_job_url(job_with_intel),
+                'date_found': datetime.now().isoformat(),
+                'source': 'job-posting',
+                # Contact enrichment fields
+                'contact_name': '',
+                'contact_title': '',
+                'contact_email': '',
+                'contact_linkedin': ''
+            }
+
+            # Optional contact enrichment
+            if do_enrich and CONTACT_DISCOVERY_ENABLED and contact_discovery is not None:
+                try:
+                    # Flexible invocation to support different modules
+                    enrichment: Optional[Dict] = None
+                    if callable(contact_discovery):
+                        enrichment = contact_discovery(job_with_intel)
+                    elif hasattr(contact_discovery, 'find_contacts'):
+                        enrichment = contact_discovery.find_contacts(company=company, role=title)
+                    if isinstance(enrichment, dict):
+                        lead['contact_name'] = enrichment.get('name') or enrichment.get('contact_name', '')
+                        lead['contact_title'] = enrichment.get('title') or enrichment.get('contact_title', '')
+                        lead['contact_email'] = enrichment.get('email') or enrichment.get('contact_email', '')
+                        lead['contact_linkedin'] = enrichment.get('linkedin') or enrichment.get('profile', '')
+                except Exception as e:
+                    print(f"Contact enrichment failed for {company}: {e}")
+
+            # Save to DB or memory
+            if db and hasattr(db, 'save_business_lead'):
+                try:
+                    db.save_business_lead(lead)
+                except Exception as e:
+                    print(f"DB save lead error: {e}, falling back to memory")
+                    business_leads.append(lead)
+            else:
+                business_leads.append(lead)
+
+            leads_out.append(lead)
+            seen.add(key)
+            if len(leads_out) >= limit:
+                break
+        except Exception as e:
+            print(f"Lead generation error: {e}")
+
+    return jsonify({
+        'success': True,
+        'generated': len(leads_out),
+        'min_score': min_score,
+        'enriched': do_enrich and CONTACT_DISCOVERY_ENABLED,
+        'database_enabled': db is not None and hasattr(db, 'save_business_lead'),
+        'leads': leads_out
+    })
+
+@app.route('/api/export-leads')
+def export_leads_endpoint():
+    """Export leads as CSV from DB if available, otherwise from memory."""
+    min_score = int(request.args.get('min_score', 0))
+    limit = int(request.args.get('limit', 1000))
+
+    # Gather leads
+    leads: List[Dict] = []
+    if db and hasattr(db, 'get_business_leads'):
+        try:
+            leads = db.get_business_leads(limit=limit, min_score=min_score)
+        except Exception as e:
+            print(f"DB get leads error: {e}")
+    if not leads:
+        leads = [l for l in business_leads if l.get('lead_score', 0) >= min_score]
+        if len(leads) > limit:
+            leads = leads[:limit]
+
+    # Build CSV in-memory
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=[
+        'company','title','location','platform','lead_score','technologies','company_size',
+        'contact_potential','contact_name','contact_title','contact_email','contact_linkedin','job_url','date_found'
+    ])
+    writer.writeheader()
+    for l in leads:
+        row = l.copy()
+        # Ensure technologies is a simple string
+        techs = row.get('technologies')
+        if isinstance(techs, list):
+            row['technologies'] = ', '.join(techs)
+        writer.writerow({k: row.get(k, '') for k in writer.fieldnames})
+
+    mem = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+    filename = f"leads_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return send_file(mem, mimetype='text/csv', as_attachment=True, download_name=filename)
+
 @app.route('/api/business-leads')
 def business_leads_endpoint():
     """Get business leads for lead generation with database integration."""

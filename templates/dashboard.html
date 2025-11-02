@@ -253,6 +253,10 @@
                 <div class="stat-number" id="remoteCount">0</div>
                 <div class="stat-label">Remote Jobs</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-number" id="leadCount">0</div>
+                <div class="stat-label">Leads (>=40)</div>
+            </div>
         </div>
         
         <div id="jobsContainer">
@@ -260,6 +264,14 @@
                 <h2>👋 Welcome to Job Scraper!</h2>
                 <p>Enter your search keywords above and click "Search Jobs" to find real job postings.</p>
                 <p>Or click "Load Samples" to see example job listings.</p>
+            </div>
+        </div>
+
+        <div class="search-box" style="margin-top:1.5rem;">
+            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+                <button onclick="generateLeads()" class="btn-search" id="genLeadsBtn">⚙️ Generate Leads</button>
+                <button onclick="exportLeads()" class="btn-sample" id="exportLeadsBtn">⬇️ Export CSV</button>
+                <span id="leadStatus" class="status hidden"></span>
             </div>
         </div>
     </div>
@@ -472,6 +484,9 @@
                 (j.location || '').toLowerCase().includes('remote')
             ).length;
             document.getElementById('remoteCount').textContent = remote;
+            // Estimate leads by quick rule (lead_score>=40 if present)
+            const leads = jobs.filter(j => (j.lead_score||0) >= 40).length;
+            document.getElementById('leadCount').textContent = leads;
         }
         
         function showStatus(message, type) {
@@ -595,6 +610,39 @@
                 }
             }
             return merged;
+        }
+
+        async function generateLeads() {
+            const btn = document.getElementById('genLeadsBtn');
+            const status = document.getElementById('leadStatus');
+            btn.disabled = true; btn.textContent = '⚙️ Generating...';
+            status.className = 'status'; status.textContent = 'Generating leads from current results...';
+            try {
+                const res = await fetch('/api/generate-leads', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ min_score: 40, enrich: true, limit: 500 })
+                });
+                const data = await res.json();
+                if (data && data.success) {
+                    status.className = 'status success';
+                    status.textContent = `✅ Generated ${data.generated} leads`;
+                    document.getElementById('leadCount').textContent = data.generated;
+                } else {
+                    status.className = 'status error';
+                    status.textContent = '❌ Failed to generate leads';
+                }
+            } catch (e) {
+                status.className = 'status error';
+                status.textContent = '❌ Error generating leads';
+            } finally {
+                btn.disabled = false; btn.textContent = '⚙️ Generate Leads';
+            }
+        }
+
+        function exportLeads() {
+            // Trigger CSV download
+            window.open('/api/export-leads?min_score=0&limit=1000', '_blank');
         }
         
         // Load jobs on page load if any exist
