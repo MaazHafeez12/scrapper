@@ -877,9 +877,10 @@ def scrape_indeed_live(keywords: str, limit: int = 20) -> List[Dict]:
                             'url': url_link,
                             'description': f"{title} at {company}",
                             'date_posted': datetime.now().strftime('%Y-%m-%d'),
-                            'id': len(jobs) + 1
+                            'id': len(jobs) + 1,
+                            'lead_score': 50  # Skip enhancement
                         }
-                        jobs.append(enhance_job_data(job))
+                        jobs.append(job)
                         
                 except Exception as e:
                     continue
@@ -1361,49 +1362,59 @@ def live_scrape():
             print(f"📊 Using API scrapers for real jobs. Platforms: {platforms}")
             
             # Debug each scraper step by step
-            print(f"🔍 Starting to scrape platforms...")
+            print(f"🔍 Starting to scrape platforms: {platforms}")
             print(f"   live_jobs count before scraping: {len(live_jobs)}")
             
             for platform in platforms:
-                if platform == 'remoteok':
-                    print(f"🔍 Scraping RemoteOK...")
-                    platform_jobs = scrape_remoteok_live(keywords, 30)
-                    print(f"   Got {len(platform_jobs)} jobs from RemoteOK")
+                print(f"\n{'='*50}")
+                print(f"🔍 SCRAPING: {platform}")
+                print(f"   Current live_jobs count: {len(live_jobs)}")
+                
+                try:
+                    platform_jobs = []
+                    
+                    if platform == 'remoteok':
+                        platform_jobs = scrape_remoteok_live(keywords, 30)
+                    elif platform == 'adzuna':
+                        platform_jobs = scrape_adzuna_jobs(keywords, 30)
+                    elif platform == 'github':
+                        platform_jobs = scrape_github_jobs(keywords, 30)
+                    elif platform == 'linkedin':
+                        platform_jobs = scrape_linkedin_live(keywords, 10)
+                    elif platform == 'indeed':
+                        platform_jobs = scrape_indeed_live(keywords, 25)
+                    elif platform == 'weworkremotely':
+                        platform_jobs = scrape_weworkremotely_live(keywords, 20)
+                    elif platform == 'glassdoor':
+                        platform_jobs = scrape_glassdoor_live(keywords, 20)
+                    elif platform == 'wellfound':
+                        platform_jobs = scrape_angellist_live(keywords, 20)
+                    elif platform == 'nodesk':
+                        platform_jobs = scrape_nodesk_live(keywords, 15)
+                    else:
+                        print(f"   ⚠️ Unknown platform: {platform}")
+                        continue
+                    
+                    print(f"   ✅ Scraper returned {len(platform_jobs)} jobs")
+                    
+                    # Show first job for verification
+                    if platform_jobs:
+                        first_job = platform_jobs[0]
+                        print(f"   📋 Sample job: '{first_job.get('title', 'N/A')}' at '{first_job.get('company', 'N/A')}' (platform: {first_job.get('platform', 'N/A')})")
+                    
                     live_jobs.extend(platform_jobs)
-                    print(f"   live_jobs count after RemoteOK: {len(live_jobs)}")
-                elif platform == 'adzuna':
-                    print(f"🔍 Scraping Adzuna...")
-                    platform_jobs = scrape_adzuna_jobs(keywords, 30)
-                    print(f"   Got {len(platform_jobs)} jobs from Adzuna")
-                    live_jobs.extend(platform_jobs)
-                    print(f"   live_jobs count after Adzuna: {len(live_jobs)}")
-                elif platform == 'github':
-                    platform_jobs = scrape_github_jobs(keywords, 30)
-                    live_jobs.extend(platform_jobs)
-                elif platform == 'linkedin':
-                    print(f"🔍 Scraping LinkedIn...")
-                    print(f"   live_jobs count BEFORE LinkedIn: {len(live_jobs)}")
-                    platform_jobs = scrape_linkedin_live(keywords, 10)  # Limited to 10 to not overwhelm
-                    print(f"   Got {len(platform_jobs)} jobs from LinkedIn")
-                    live_jobs.extend(platform_jobs)
-                    print(f"   live_jobs count AFTER LinkedIn: {len(live_jobs)}")
-                elif platform == 'indeed':
-                    platform_jobs = scrape_indeed_live(keywords, 25)
-                    live_jobs.extend(platform_jobs)
-                elif platform == 'weworkremotely':
-                    platform_jobs = scrape_weworkremotely_live(keywords, 20)
-                    live_jobs.extend(platform_jobs)
-                elif platform == 'glassdoor':
-                    platform_jobs = scrape_glassdoor_live(keywords, 20)
-                    live_jobs.extend(platform_jobs)
-                elif platform == 'wellfound':
-                    platform_jobs = scrape_angellist_live(keywords, 20)
-                    live_jobs.extend(platform_jobs)
-                elif platform == 'nodesk':
-                    platform_jobs = scrape_nodesk_live(keywords, 15)
-                    live_jobs.extend(platform_jobs)
+                    print(f"   ➡️ live_jobs count after {platform}: {len(live_jobs)}")
+                    
+                except Exception as e:
+                    print(f"   ❌ ERROR in {platform} scraper: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
                 time.sleep(0.5)  # Rate limiting
+            
+            print(f"\n{'='*50}")
+            print(f"🏁 SCRAPING COMPLETE")
+            print(f"   Final live_jobs count: {len(live_jobs)}")
             
             scraping_status['scraper_type'] = 'api-based'
             scraping_status['real_time_data'] = True
