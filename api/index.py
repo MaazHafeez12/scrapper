@@ -1445,6 +1445,37 @@ def live_scrape():
         'real_time_data': scraping_status.get('real_time_data', False)
     })
 
+@app.route('/api/test-remoteok')
+def test_remoteok_direct():
+    """Direct test of RemoteOK API."""
+    try:
+        import requests
+        url = "https://remoteok.com/api"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return jsonify({
+                'success': True,
+                'status_code': response.status_code,
+                'total_items': len(data),
+                'first_5_items': data[:5],
+                'sample_job': data[1] if len(data) > 1 else None
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'status_code': response.status_code,
+                'error': 'Non-200 response'
+            })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'type': type(e).__name__
+        })
+
 @app.route('/api/test-scrapers')
 def test_scrapers():
     """Test each scraper individually to see which ones work."""
@@ -1454,9 +1485,13 @@ def test_scrapers():
     # Test RemoteOK
     try:
         remoteok_jobs = scrape_remoteok_live(keywords, 5)
-        results['remoteok'] = {'count': len(remoteok_jobs), 'platforms': [j.get('platform') for j in remoteok_jobs]}
+        results['remoteok'] = {
+            'count': len(remoteok_jobs), 
+            'platforms': [j.get('platform') for j in remoteok_jobs],
+            'sample': remoteok_jobs[0] if remoteok_jobs else None
+        }
     except Exception as e:
-        results['remoteok'] = {'error': str(e)}
+        results['remoteok'] = {'error': str(e), 'type': type(e).__name__}
     
     # Test Adzuna
     try:
