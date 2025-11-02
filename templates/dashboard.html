@@ -311,6 +311,22 @@
                         platformCounts[p] = (platformCounts[p] || 0) + 1;
                     });
                     console.log('Platform breakdown:', platformCounts);
+
+                    // Client-side booster: if results are thin or only LinkedIn, fetch open APIs directly
+                    const onlyLinkedIn = Object.keys(platformCounts).length === 1 && platformCounts["LinkedIn"] === currentJobs.length;
+                    const tooFew = currentJobs.length <= 10;
+                    if (onlyLinkedIn || tooFew) {
+                        console.log('⚡ Adding client-side jobs from Remotive/Arbeitnow...');
+                        const boosted = await fetchClientSideSources(keywords);
+                        if (boosted.length) {
+                            currentJobs = mergeJobs(currentJobs, boosted);
+                            displayJobs(currentJobs);
+                            updateStats(currentJobs);
+                            const pc2 = {};
+                            currentJobs.forEach(j => { const p = j.platform || 'Unknown'; pc2[p] = (pc2[p]||0)+1; });
+                            console.log('Platform breakdown (after boost):', pc2);
+                        }
+                    }
                 } else {
                     showStatus('❌ Search failed. Please try again.', 'error');
                 }
@@ -455,6 +471,84 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // ---- Client-side boosters (Remotive + Arbeitnow) ----
+        async function fetchClientSideSources(keywords) {
+            try {
+                const [remotive, arbeit] = await Promise.all([
+                    fetchRemotive(keywords).catch(() => []),
+                    fetchArbeitnow(keywords).catch(() => [])
+                ]);
+                return [...remotive, ...arbeit];
+            } catch {
+                return [];
+            }
+        }
+
+        async function fetchRemotive(keywords) {
+            const url = `https://remotive.com/api/remote-jobs?search=${encodeURIComponent(keywords)}`;
+            const res = await fetch(url);
+            if (!res.ok) return [];
+            const data = await res.json();
+            const jobs = (data.jobs || []).slice(0, 20).map((item, idx) => ({
+                title: item.title || '',
+                company: item.company_name || '',
+                location: item.candidate_required_location || 'Remote',
+                platform: 'Remotive',
+                url: item.url || '',
+                description: (item.description || '').slice(0, 300),
+                date_posted: (item.publication_date || '').slice(0,10),
+                tags: item.tags || [],
+                id: item.id || `remotive_${idx}`
+            }));
+            console.log(`Remotive (client) returned ${jobs.length} jobs`);
+            return jobs;
+        }
+
+        async function fetchArbeitnow(keywords) {
+            const res = await fetch('https://www.arbeitnow.com/api/job-board-api');
+            if (!res.ok) return [];
+            const data = await res.json();
+            const items = data.data || [];
+            const k = (keywords || '').toLowerCase();
+            const out = [];
+            for (let i=0; i<items.length && out.length<20; i++) {
+                const it = items[i];
+                const title = (it.title||'').trim();
+                const company = (it.company || it.company_name || '').trim();
+                const desc = (it.description||'');
+                const blob = `${title} ${company} ${desc}`.toLowerCase();
+                const match = k.split(/\s+/).some(w => w.length>2 && blob.includes(w));
+                if (match || !k) {
+                    out.push({
+                        title,
+                        company,
+                        location: it.location || 'Remote',
+                        platform: 'Arbeitnow',
+                        url: it.url || it.slug || '#',
+                        description: desc.slice(0, 300),
+                        date_posted: (it.created_at||'').slice(0,10),
+                        tags: it.tags || [],
+                        id: it.slug || `arbeitnow_${out.length}`
+                    });
+                }
+            }
+            console.log(`Arbeitnow (client) returned ${out.length} jobs`);
+            return out;
+        }
+
+        function mergeJobs(existing, extras) {
+            const seen = new Set(existing.map(j => (j.url||'') + '|' + (j.title||'') + '|' + (j.company||'')));
+            const merged = existing.slice();
+            for (const j of extras) {
+                const key = (j.url||'') + '|' + (j.title||'') + '|' + (j.company||'');
+                if (!seen.has(key)) {
+                    merged.push(j);
+                    seen.add(key);
+                }
+            }
+            return merged;
         }
         
         // Load jobs on page load if any exist
