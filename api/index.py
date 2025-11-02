@@ -1173,6 +1173,79 @@ def scrape_adzuna_jobs(keywords: str, limit: int = 30) -> List[Dict]:
         print(f"❌ Adzuna API error: {e}")
     return jobs
 
+def scrape_remotive_jobs(keywords: str, limit: int = 20) -> List[Dict]:
+    """Fetch jobs from Remotive public API (no key required)."""
+    jobs: List[Dict] = []
+    try:
+        q = quote(keywords)
+        url = f"https://remotive.com/api/remote-jobs?search={q}"
+        response = requests.get(url, timeout=12)
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('jobs', [])
+            print(f"✅ Remotive API returned {len(items)} jobs")
+            count = 0
+            for item in items:
+                if count >= limit:
+                    break
+                job = {
+                    'title': item.get('title', ''),
+                    'company': item.get('company_name', ''),
+                    'location': item.get('candidate_required_location', 'Remote'),
+                    'platform': 'Remotive',
+                    'url': item.get('url', ''),
+                    'description': (item.get('description', '') or '')[:300],
+                    'date_posted': (item.get('publication_date', '') or '')[:10],
+                    'tags': item.get('tags', []),
+                    'job_type': item.get('job_type'),
+                    'id': item.get('id', f"remotive_{count}"),
+                    'lead_score': 50
+                }
+                jobs.append(job)
+                count += 1
+    except Exception as e:
+        print(f"❌ Remotive API error: {e}")
+    return jobs
+
+def scrape_arbeitnow_jobs(keywords: str, limit: int = 20) -> List[Dict]:
+    """Fetch jobs from Arbeitnow public API (no key required)."""
+    jobs: List[Dict] = []
+    try:
+        # The API is paginated; fetch the first page and filter client-side
+        url = "https://www.arbeitnow.com/api/job-board-api"
+        response = requests.get(url, timeout=12)
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('data', [])
+            print(f"✅ Arbeitnow API returned {len(items)} jobs")
+            k = keywords.lower()
+            count = 0
+            for item in items:
+                if count >= limit:
+                    break
+                title = (item.get('title') or '').strip()
+                company = (item.get('company') or item.get('company_name') or '').strip()
+                desc = (item.get('description') or '')
+                # simple match
+                blob = f"{title} {company} {desc}".lower()
+                if any(w for w in k.split() if len(w) > 2 and w in blob) or not keywords:
+                    job = {
+                        'title': title,
+                        'company': company,
+                        'location': item.get('location', 'Remote'),
+                        'platform': 'Arbeitnow',
+                        'url': item.get('url') or item.get('slug', ''),
+                        'description': (desc or '')[:300],
+                        'date_posted': (item.get('created_at') or '')[:10],
+                        'tags': item.get('tags', []) or [],
+                        'id': item.get('slug', f"arbeitnow_{count}"),
+                        'lead_score': 50
+                    }
+                    jobs.append(job)
+                    count += 1
+    except Exception as e:
+        print(f"❌ Arbeitnow API error: {e}")
+    return jobs
 def scrape_nodesk_live(keywords: str, limit: int = 20) -> List[Dict]:
     """Scrape NoDesk for live remote jobs."""
     jobs = []
@@ -1447,6 +1520,10 @@ def live_scrape():
                                 'id': f'wwr_{i}',
                                 'lead_score': 50
                             } for i in range(5)]
+                    elif platform == 'remotive':
+                        platform_jobs = scrape_remotive_jobs(keywords, 20)
+                    elif platform == 'arbeitnow':
+                        platform_jobs = scrape_arbeitnow_jobs(keywords, 20)
                     elif platform == 'glassdoor':
                         platform_jobs = scrape_glassdoor_live(keywords, 20)
                     elif platform == 'wellfound':
@@ -1458,6 +1535,8 @@ def live_scrape():
                         continue
                     
                     print(f"   ✅ Scraper returned {len(platform_jobs)} jobs")
+                    if len(platform_jobs) == 0:
+                        print(f"   ⚠️ No jobs from {platform}")
                     
                     # Show first job for verification
                     if platform_jobs:
@@ -1466,7 +1545,6 @@ def live_scrape():
                     
                     live_jobs.extend(platform_jobs)
                     print(f"   ➡️ live_jobs count after {platform}: {len(live_jobs)}")
-                    
                 except Exception as e:
                     print(f"   ❌ ERROR in {platform} scraper: {e}")
                     import traceback
