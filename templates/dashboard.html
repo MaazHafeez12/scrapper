@@ -230,10 +230,6 @@
                     <input type="checkbox" id="remoteOnly" />
                     <span style="font-size:0.95rem;color:#4a5568;">Remote only</span>
                 </label>
-                <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
-                    <input type="checkbox" id="projectOnly" />
-                    <span style="font-size:0.95rem;color:#4a5568;">Projects / contracts</span>
-                </label>
                 <button onclick="searchJobs()" class="btn-search" id="searchBtn">
                     🔍 Search Jobs
                 </button>
@@ -274,7 +270,6 @@
         async function searchJobs() {
             const keywords = document.getElementById('searchInput').value.trim();
             const remoteOnly = document.getElementById('remoteOnly').checked;
-            const projectOnly = document.getElementById('projectOnly').checked;
             if (!keywords) {
                 showStatus('Please enter search keywords', 'error');
                 return;
@@ -300,8 +295,7 @@
                         keywords: keywords,
                         platforms: ['remoteok', 'adzuna', 'remotive', 'arbeitnow', 'indeed', 'glassdoor', 'linkedin'],
                         use_advanced_scraper: false,
-                        remote_only: remoteOnly,
-                        project_only: projectOnly
+                        remote_only: remoteOnly
                     })
                 });
                 
@@ -338,13 +332,8 @@
                             const tags = (j.tags||[]).join(' ').toLowerCase();
                             const plat = (j.platform||'').toLowerCase();
                             const desc = (j.description||'').toLowerCase();
-                            const title = (j.title||'').toLowerCase();
-                            const jt = (j.job_type||'').toLowerCase();
                             const isRemote = loc.includes('remote') || loc.includes('anywhere') || tags.includes('remote') || ['remoteok','weworkremotely','nodesk','remotive'].includes(plat) || desc.includes('remote');
-                            const proj = ['contract','freelance','gig','temporary','consultant','project'];
-                            const isProject = proj.some(k => jt.includes(k) || title.includes(k) || tags.includes(k) || desc.includes(k));
                             if (remoteOnly && !isRemote) return false;
-                            if (projectOnly && !isProject) return false;
                             return true;
                         });
                         if (filteredBoosted.length) {

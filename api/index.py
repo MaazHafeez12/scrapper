@@ -1445,7 +1445,6 @@ def live_scrape():
     use_advanced = data.get('use_advanced_scraper', False)
     # New filters
     remote_only = bool(data.get('remote_only', False))
-    project_only = bool(data.get('project_only', False))
     
     scraping_status['running'] = True
     scraping_status['last_search'] = keywords
@@ -1689,7 +1688,7 @@ def live_scrape():
             scraping_status['real_time_data'] = True
         
         # Apply post-scrape filters if requested
-        if remote_only or project_only:
+        if remote_only:
             def is_remote(job: Dict) -> bool:
                 loc = (job.get('location') or '').lower()
                 tags = ' '.join(job.get('tags') or []) .lower()
@@ -1703,29 +1702,13 @@ def live_scrape():
                 desc = (job.get('description') or '').lower()
                 return 'remote' in desc
 
-            def is_project(job: Dict) -> bool:
-                jt = (job.get('job_type') or '').lower()
-                title = (job.get('title') or '').lower()
-                desc = (job.get('description') or '').lower()
-                tags_text = ' '.join(job.get('tags') or []) .lower()
-                keywords = ['contract','freelance','gig','temporary','consultant','project']
-                if any(k in jt for k in keywords):
-                    return True
-                if any(k in title for k in keywords):
-                    return True
-                if any(k in tags_text for k in keywords):
-                    return True
-                return 'project' in desc or 'freelance' in desc
-
             before = len(live_jobs)
             filtered = []
             for j in live_jobs:
-                if remote_only and not is_remote(j):
-                    continue
-                if project_only and not is_project(j):
+                if not is_remote(j):
                     continue
                 filtered.append(j)
-            print(f"🧹 Applied filters remote_only={remote_only}, project_only={project_only}: {before} -> {len(filtered)}")
+            print(f"🧹 Applied filter remote_only={remote_only}: {before} -> {len(filtered)}")
             live_jobs = filtered
 
         scraping_status['job_count'] = len(live_jobs)
