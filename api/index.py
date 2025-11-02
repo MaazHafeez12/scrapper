@@ -1335,6 +1335,14 @@ def live_scrape():
     
     live_jobs.clear()
     
+    # Clear old jobs from database to prevent stale data
+    if db and hasattr(db, 'clear_jobs'):
+        try:
+            db.clear_jobs()
+            print("🗑️ Cleared old jobs from database")
+        except Exception as e:
+            print(f"⚠️ Could not clear database: {e}")
+    
     try:
         total_leads_before = len(business_leads) if not db else 0
         
@@ -1369,8 +1377,9 @@ def live_scrape():
                     platform_jobs = scrape_github_jobs(keywords, 30)
                     live_jobs.extend(platform_jobs)
                 elif platform == 'linkedin':
-                    platform_jobs = scrape_linkedin_live(keywords, 25)
-                    live_jobs.extend(platform_jobs)
+                    # DISABLED: LinkedIn only returns mock data
+                    print(f"⚠️ LinkedIn scraper skipped (mock data only)")
+                    pass
                 elif platform == 'indeed':
                     platform_jobs = scrape_indeed_live(keywords, 25)
                     live_jobs.extend(platform_jobs)
