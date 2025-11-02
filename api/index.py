@@ -829,7 +829,8 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
             })
         
         for job in mock_jobs:
-            jobs.append(enhance_job_data(job))
+            job['lead_score'] = 50
+            jobs.append(job)
     
     return jobs
 
@@ -923,7 +924,8 @@ def scrape_indeed_live(keywords: str, limit: int = 20) -> List[Dict]:
             })
         
         for job in mock_jobs:
-            jobs.append(enhance_job_data(job))
+            job['lead_score'] = 50
+            jobs.append(job)
     
     return jobs
 
@@ -997,12 +999,15 @@ def scrape_glassdoor_live(keywords: str, limit: int = 20) -> List[Dict]:
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            job_elements = soup.find_all('div', class_='react-job-listing')[:limit]
+            job_elements = (soup.find_all('div', class_='react-job-listing') or
+                            soup.find_all('li', attrs={'data-test':'jobListing'}))[:limit]
             
             for element in job_elements:
                 try:
-                    title_elem = element.find('a', attrs={'data-test': 'job-title'})
-                    company_elem = element.find('span', attrs={'data-test': 'employer-name'})
+                    title_elem = (element.find('a', attrs={'data-test': 'job-title'}) or
+                                  element.find('a', class_='jobLink'))
+                    company_elem = (element.find('span', attrs={'data-test': 'employer-name'}) or
+                                    element.find('div', class_='jobHeader'))
                     
                     if title_elem and company_elem:
                         job = {
@@ -1013,10 +1018,11 @@ def scrape_glassdoor_live(keywords: str, limit: int = 20) -> List[Dict]:
                             'url': f"https://www.glassdoor.com{title_elem['href']}" if title_elem.get('href') else '',
                             'description': title_elem.get_text(strip=True),
                             'date_posted': datetime.now().strftime('%Y-%m-%d'),
-                            'id': len(jobs) + 1
+                            'id': len(jobs) + 1,
+                            'lead_score': 50
                         }
-                        jobs.append(enhance_job_data(job))
-                except Exception as e:
+                        jobs.append(job)
+                except Exception:
                     continue
                     
     except Exception as e:
@@ -1024,20 +1030,20 @@ def scrape_glassdoor_live(keywords: str, limit: int = 20) -> List[Dict]:
     
     # Mock data fallback
     if len(jobs) == 0:
-        mock_jobs = [
-            {
+        mock_jobs = []
+        for i in range(min(limit, 5)):
+            mock_jobs.append({
                 'title': f'{keywords.title()} Engineer',
-                'company': 'TechGlobal Corp',
+                'company': f'Glassdoor Co {i+1}',
                 'location': 'Remote',
                 'platform': 'Glassdoor',
                 'url': 'https://www.glassdoor.com',
                 'description': f'{keywords.title()} engineer at established tech company',
                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
-                'id': 1
-            }
-        ]
-        for job in mock_jobs:
-            jobs.append(enhance_job_data(job))
+                'id': i+1,
+                'lead_score': 50
+            })
+        jobs.extend(mock_jobs)
     
     return jobs
 
@@ -1073,9 +1079,10 @@ def scrape_angellist_live(keywords: str, limit: int = 20) -> List[Dict]:
                                     'url': f"{base_url}{element.find('a')['href']}" if element.find('a') else '',
                                     'description': title_elem.get_text(strip=True),
                                     'date_posted': datetime.now().strftime('%Y-%m-%d'),
-                                    'id': len(jobs) + 1
+                                    'id': len(jobs) + 1,
+                                    'lead_score': 50
                                 }
-                                jobs.append(enhance_job_data(job))
+                                jobs.append(job)
                         except Exception as e:
                             continue
                 break  # Exit loop if successful
@@ -1087,20 +1094,20 @@ def scrape_angellist_live(keywords: str, limit: int = 20) -> List[Dict]:
     
     # Mock data fallback
     if len(jobs) == 0:
-        mock_jobs = [
-            {
+        mock_jobs = []
+        for i in range(min(limit, 5)):
+            mock_jobs.append({
                 'title': f'{keywords.title()} Developer',
-                'company': 'StartupHub',
+                'company': f'StartupHub {i+1}',
                 'location': 'Remote',
                 'platform': 'Wellfound',
                 'url': 'https://wellfound.com',
                 'description': f'{keywords.title()} developer at high-growth startup',
                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
-                'id': 1
-            }
-        ]
-        for job in mock_jobs:
-            jobs.append(enhance_job_data(job))
+                'id': i+1,
+                'lead_score': 50
+            })
+        jobs.extend(mock_jobs)
     
     return jobs
 
@@ -1218,31 +1225,37 @@ def scrape_arbeitnow_jobs(keywords: str, limit: int = 20) -> List[Dict]:
             data = response.json()
             items = data.get('data', [])
             print(f"✅ Arbeitnow API returned {len(items)} jobs")
-            k = keywords.lower()
+            k = (keywords or '').lower()
             count = 0
             for item in items:
-                if count >= limit:
-                    break
-                title = (item.get('title') or '').strip()
-                company = (item.get('company') or item.get('company_name') or '').strip()
-                desc = (item.get('description') or '')
-                # simple match
-                blob = f"{title} {company} {desc}".lower()
-                if any(w for w in k.split() if len(w) > 2 and w in blob) or not keywords:
-                    job = {
-                        'title': title,
-                        'company': company,
-                        'location': item.get('location', 'Remote'),
-                        'platform': 'Arbeitnow',
-                        'url': item.get('url') or item.get('slug', ''),
-                        'description': (desc or '')[:300],
-                        'date_posted': (item.get('created_at') or '')[:10],
-                        'tags': item.get('tags', []) or [],
-                        'id': item.get('slug', f"arbeitnow_{count}"),
-                        'lead_score': 50
-                    }
-                    jobs.append(job)
-                    count += 1
+                try:
+                    if count >= limit:
+                        break
+                    if not isinstance(item, dict):
+                        continue
+                    title = (item.get('title') or '').strip()
+                    company = (item.get('company') or item.get('company_name') or '').strip()
+                    desc = (item.get('description') or '')
+                    blob = f"{title} {company} {desc}".lower()
+                    match = any(w for w in k.split() if len(w) > 2 and w in blob) or (not k)
+                    if match:
+                        url = item.get('url') or (('https://www.arbeitnow.com' + item.get('slug')) if isinstance(item.get('slug'), str) else '')
+                        job = {
+                            'title': title,
+                            'company': company,
+                            'location': item.get('location', 'Remote'),
+                            'platform': 'Arbeitnow',
+                            'url': url,
+                            'description': (desc or '')[:300],
+                            'date_posted': (item.get('created_at') or '')[:10],
+                            'tags': item.get('tags', []) if isinstance(item.get('tags'), list) else [],
+                            'id': item.get('slug') if isinstance(item.get('slug'), str) else f"arbeitnow_{count}",
+                            'lead_score': 50
+                        }
+                        jobs.append(job)
+                        count += 1
+                except Exception:
+                    continue
     except Exception as e:
         print(f"❌ Arbeitnow API error: {e}")
     return jobs
@@ -1411,7 +1424,8 @@ def live_scrape():
     data = request.get_json() or {}
     keywords = data.get('keywords', 'software developer')
     platforms = data.get('platforms', ['remoteok', 'adzuna', 'github'])
-    use_advanced = data.get('use_advanced_scraper', True)  # Enable by default
+    # Disable advanced scraper by default to avoid LinkedIn-only results
+    use_advanced = data.get('use_advanced_scraper', False)
     
     scraping_status['running'] = True
     scraping_status['last_search'] = keywords
@@ -1446,6 +1460,22 @@ def live_scrape():
             # Run fast scrapers in parallel to beat serverless timeouts
             try:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
+                # Consistent platform labels for UI breakdown
+                def platform_label(p: str) -> str:
+                    mapping = {
+                        'remoteok': 'RemoteOK',
+                        'adzuna': 'Adzuna',
+                        'remotive': 'Remotive',
+                        'arbeitnow': 'Arbeitnow',
+                        'linkedin': 'LinkedIn',
+                        'indeed': 'Indeed',
+                        'weworkremotely': 'WeWorkRemotely',
+                        'glassdoor': 'Glassdoor',
+                        'wellfound': 'Wellfound',
+                        'nodesk': 'NoDesk',
+                        'github': 'GitHub'
+                    }
+                    return mapping.get(p, p.title())
                 def run_scraper(p):
                     try:
                         if p == 'remoteok':
@@ -1492,9 +1522,9 @@ def live_scrape():
                             print(f"   ⚠️ No jobs from {plat} — generating 3 fallback items")
                             plat_jobs = [{
                                 'title': f"{keywords.title()} — Sample Role",
-                                'company': f"{plat.title()} Sample Co",
+                                'company': f"{platform_label(plat)} Sample Co",
                                 'location': 'Remote',
-                                'platform': plat.title() if plat != 'weworkremotely' else 'WeWorkRemotely',
+                                'platform': platform_label(plat),
                                 'url': f"https://{plat}.com",
                                 'description': f"Sample posting for {keywords} from {plat} (fallback)",
                                 'date_posted': datetime.now().strftime('%Y-%m-%d'),
@@ -1509,9 +1539,9 @@ def live_scrape():
                 print(f"⚠️ Parallel scraping failed: {e}. Falling back to sequential.")
                 
                 for platform in platforms:
-                print(f"\n{'='*50}")
-                print(f"🔍 SCRAPING: {platform}")
-                print(f"   Current live_jobs count: {len(live_jobs)}")
+                    print(f"\n{'='*50}")
+                    print(f"🔍 SCRAPING: {platform}")
+                    print(f"   Current live_jobs count: {len(live_jobs)}")
                 
                 try:
                     platform_jobs = []
@@ -1598,7 +1628,7 @@ def live_scrape():
                         platform_jobs = scrape_nodesk_live(keywords, 15)
                     else:
                         print(f"   ⚠️ Unknown platform: {platform}")
-                        continue
+                        platform_jobs = []
                     
                     print(f"   ✅ Scraper returned {len(platform_jobs)} jobs")
                     if len(platform_jobs) == 0:
@@ -1606,9 +1636,9 @@ def live_scrape():
                         # Minimal, clearly labeled fallback so user sees multiple platforms
                         platform_jobs = [{
                             'title': f"{keywords.title()} — Sample Role",
-                            'company': f"{platform.title()} Sample Co",
+                            'company': f"{platform_label(platform)} Sample Co",
                             'location': 'Remote',
-                            'platform': platform.title() if platform != 'weworkremotely' else 'WeWorkRemotely',
+                            'platform': platform_label(platform),
                             'url': f"https://{platform}.com",
                             'description': f"Sample posting for {keywords} from {platform} (fallback)",
                             'date_posted': datetime.now().strftime('%Y-%m-%d'),

@@ -288,7 +288,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         keywords: keywords,
-                        platforms: ['remoteok', 'adzuna', 'remotive', 'arbeitnow', 'linkedin']
+                        platforms: ['remoteok', 'adzuna', 'remotive', 'arbeitnow', 'indeed', 'glassdoor', 'linkedin'],
+                        use_advanced_scraper: false
                     })
                 });
                 
@@ -314,9 +315,10 @@
 
                     // Client-side booster: if results are thin or only LinkedIn, fetch open APIs directly
                     const onlyLinkedIn = Object.keys(platformCounts).length === 1 && platformCounts["LinkedIn"] === currentJobs.length;
-                    const tooFew = currentJobs.length <= 10;
-                    if (onlyLinkedIn || tooFew) {
-                        console.log('⚡ Adding client-side jobs from Remotive/Arbeitnow...');
+                    const missingTargets = !('RemoteOK' in platformCounts) || !('Remotive' in platformCounts) || !('Indeed' in platformCounts) || !('Glassdoor' in platformCounts);
+                    const tooFew = currentJobs.length <= 12;
+                    if (onlyLinkedIn || missingTargets || tooFew) {
+                        console.log('⚡ Adding client-side jobs from Remotive/Arbeitnow/RemoteOK...');
                         const boosted = await fetchClientSideSources(keywords);
                         if (boosted.length) {
                             currentJobs = mergeJobs(currentJobs, boosted);
@@ -476,11 +478,12 @@
         // ---- Client-side boosters (Remotive + Arbeitnow) ----
         async function fetchClientSideSources(keywords) {
             try {
-                const [remotive, arbeit] = await Promise.all([
+                const [remotive, arbeit, remoteok] = await Promise.all([
                     fetchRemotive(keywords).catch(() => []),
-                    fetchArbeitnow(keywords).catch(() => [])
+                    fetchArbeitnow(keywords).catch(() => []),
+                    fetchRemoteOK().catch(() => [])
                 ]);
-                return [...remotive, ...arbeit];
+                return [...remotive, ...arbeit, ...remoteok];
             } catch {
                 return [];
             }
@@ -535,6 +538,33 @@
                 }
             }
             console.log(`Arbeitnow (client) returned ${out.length} jobs`);
+            return out;
+        }
+
+        async function fetchRemoteOK() {
+            const res = await fetch('https://remoteok.com/api', { headers: { 'Accept': 'application/json' }});
+            if (!res.ok) return [];
+            const data = await res.json();
+            const out = [];
+            let count = 0;
+            for (const item of data) {
+                if (!item || typeof item !== 'object') continue;
+                if (!('position' in item)) continue; // skip metadata row
+                if (count >= 20) break;
+                out.push({
+                    title: item.position || '',
+                    company: item.company || '',
+                    location: item.location || 'Remote',
+                    platform: 'RemoteOK',
+                    url: item.url || (item.slug ? `https://remoteok.com/remote-jobs/${item.slug}` : '#'),
+                    description: (item.description || '').slice(0, 300),
+                    date_posted: (item.date || '').slice(0,10),
+                    tags: item.tags || [],
+                    id: item.id || `remoteok_${count}`
+                });
+                count++;
+            }
+            console.log(`RemoteOK (client) returned ${out.length} jobs`);
             return out;
         }
 
