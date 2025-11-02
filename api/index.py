@@ -1360,33 +1360,33 @@ def live_scrape():
             # Use API-based scrapers for reliable real data
             print(f"📊 Using API scrapers for real jobs. Platforms: {platforms}")
             
-            # SIMPLIFIED: Just scrape RemoteOK first to test
-            print(f"🔍 Testing RemoteOK scraper...")
-            remoteok_jobs = scrape_remoteok_live(keywords, 20)
-            print(f"   RemoteOK returned {len(remoteok_jobs)} jobs")
-            print(f"   First job platform: {remoteok_jobs[0].get('platform') if remoteok_jobs else 'NONE'}")
-            live_jobs.extend(remoteok_jobs)
+            # Debug each scraper step by step
+            print(f"🔍 Starting to scrape platforms...")
+            print(f"   live_jobs count before scraping: {len(live_jobs)}")
             
             for platform in platforms:
                 if platform == 'remoteok':
-                    continue  # Already scraped above
                     print(f"🔍 Scraping RemoteOK...")
                     platform_jobs = scrape_remoteok_live(keywords, 30)
                     print(f"   Got {len(platform_jobs)} jobs from RemoteOK")
                     live_jobs.extend(platform_jobs)
+                    print(f"   live_jobs count after RemoteOK: {len(live_jobs)}")
                 elif platform == 'adzuna':
                     print(f"🔍 Scraping Adzuna...")
                     platform_jobs = scrape_adzuna_jobs(keywords, 30)
                     print(f"   Got {len(platform_jobs)} jobs from Adzuna")
                     live_jobs.extend(platform_jobs)
+                    print(f"   live_jobs count after Adzuna: {len(live_jobs)}")
                 elif platform == 'github':
                     platform_jobs = scrape_github_jobs(keywords, 30)
                     live_jobs.extend(platform_jobs)
                 elif platform == 'linkedin':
                     print(f"🔍 Scraping LinkedIn...")
+                    print(f"   live_jobs count BEFORE LinkedIn: {len(live_jobs)}")
                     platform_jobs = scrape_linkedin_live(keywords, 10)  # Limited to 10 to not overwhelm
                     print(f"   Got {len(platform_jobs)} jobs from LinkedIn")
                     live_jobs.extend(platform_jobs)
+                    print(f"   live_jobs count AFTER LinkedIn: {len(live_jobs)}")
                 elif platform == 'indeed':
                     platform_jobs = scrape_indeed_live(keywords, 25)
                     live_jobs.extend(platform_jobs)
