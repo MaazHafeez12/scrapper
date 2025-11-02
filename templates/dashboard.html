@@ -269,10 +269,30 @@
 
         <div class="search-box" style="margin-top:1.5rem;">
             <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+                <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
+                    <span style="font-size:0.95rem;color:#4a5568;">Min score</span>
+                    <input type="number" id="minScore" value="40" min="0" max="100" style="width:80px;border:none;outline:none;" />
+                </label>
+                <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
+                    <input type="checkbox" id="enrichToggle" checked />
+                    <span style="font-size:0.95rem;color:#4a5568;">Enrich contacts</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
+                    <span style="font-size:0.95rem;color:#4a5568;">Export preset</span>
+                    <select id="exportPreset" style="border:none;outline:none;">
+                        <option value="default">Default</option>
+                        <option value="hubspot">HubSpot</option>
+                        <option value="pipedrive">Pipedrive</option>
+                    </select>
+                </label>
                 <button onclick="generateLeads()" class="btn-search" id="genLeadsBtn">⚙️ Generate Leads</button>
                 <button onclick="exportLeads()" class="btn-sample" id="exportLeadsBtn">⬇️ Export CSV</button>
                 <span id="leadStatus" class="status hidden"></span>
             </div>
+        </div>
+
+        <div class="search-box" style="margin-top:1rem;">
+            <div id="leadPreview"></div>
         </div>
     </div>
     
@@ -615,19 +635,22 @@
         async function generateLeads() {
             const btn = document.getElementById('genLeadsBtn');
             const status = document.getElementById('leadStatus');
+            const minScore = parseInt(document.getElementById('minScore').value || '40', 10);
+            const enrich = !!document.getElementById('enrichToggle').checked;
             btn.disabled = true; btn.textContent = '⚙️ Generating...';
-            status.className = 'status'; status.textContent = 'Generating leads from current results...';
+            status.className = 'status'; status.textContent = `Generating leads (min score ${minScore})...`;
             try {
                 const res = await fetch('/api/generate-leads', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ min_score: 40, enrich: true, limit: 500 })
+                    body: JSON.stringify({ min_score: minScore, enrich: enrich, limit: 500 })
                 });
                 const data = await res.json();
                 if (data && data.success) {
                     status.className = 'status success';
                     status.textContent = `✅ Generated ${data.generated} leads`;
                     document.getElementById('leadCount').textContent = data.generated;
+                    renderLeadPreview(data.leads || []);
                 } else {
                     status.className = 'status error';
                     status.textContent = '❌ Failed to generate leads';
@@ -641,8 +664,70 @@
         }
 
         function exportLeads() {
-            // Trigger CSV download
-            window.open('/api/export-leads?min_score=0&limit=1000', '_blank');
+            const minScore = parseInt(document.getElementById('minScore').value || '0', 10);
+            const preset = document.getElementById('exportPreset').value || 'default';
+            window.open(`/api/export-leads?min_score=${encodeURIComponent(minScore)}&limit=1000&preset=${encodeURIComponent(preset)}`, '_blank');
+        }
+
+        function renderLeadPreview(leads) {
+            const container = document.getElementById('leadPreview');
+            if (!leads || leads.length === 0) {
+                container.innerHTML = `<div class="empty-state"><h2>No leads yet</h2><p>Generate leads to see a preview here.</p></div>`;
+                return;
+            }
+            let current = leads.slice(0, 50); // limit preview
+            let sortField = 'lead_score';
+            let asc = false;
+            const headers = [
+                { key: 'lead_score', label: 'Score' },
+                { key: 'company', label: 'Company' },
+                { key: 'title', label: 'Title' },
+                { key: 'domain', label: 'Domain' },
+                { key: 'contact_email', label: 'Email' },
+                { key: 'platform', label: 'Platform' }
+            ];
+            function sortAndRender() {
+                current.sort((a,b)=>{
+                    const av = (a[sortField]||'').toString().toLowerCase();
+                    const bv = (b[sortField]||'').toString().toLowerCase();
+                    if (!isNaN(Number(a[sortField])) && !isNaN(Number(b[sortField]))) {
+                        return (Number(a[sortField]) - Number(b[sortField])) * (asc?1:-1);
+                    }
+                    return (av>bv?1:av<bv?-1:0) * (asc?1:-1);
+                });
+                container.innerHTML = `
+                    <div style="overflow:auto;">
+                        <table style="width:100%;border-collapse:collapse;">
+                            <thead>
+                                <tr>
+                                    ${headers.map(h=>`<th style=\"cursor:pointer;text-align:left;border-bottom:1px solid #eee;padding:8px;\" data-key=\"${h.key}\">${h.label}</th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${current.map(l=>`
+                                    <tr>
+                                        <td style=\"padding:8px;border-bottom:1px solid #f5f5f5;\">${l.lead_score||''}</td>
+                                        <td style=\"padding:8px;border-bottom:1px solid #f5f5f5;\">${escapeHtml(l.company||'')}</td>
+                                        <td style=\"padding:8px;border-bottom:1px solid #f5f5f5;\">${escapeHtml(l.title||'')}</td>
+                                        <td style=\"padding:8px;border-bottom:1px solid #f5f5f5;\">${escapeHtml(l.domain||'')}</td>
+                                        <td style=\"padding:8px;border-bottom:1px solid #f5f5f5;\">${escapeHtml(l.contact_email||'')}</td>
+                                        <td style=\"padding:8px;border-bottom:1px solid #f5f5f5;\">${escapeHtml(l.platform||'')}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                // Bind header clicks
+                container.querySelectorAll('th[data-key]').forEach(th => {
+                    th.addEventListener('click', () => {
+                        const key = th.getAttribute('data-key');
+                        if (sortField === key) { asc = !asc; } else { sortField = key; asc = false; }
+                        sortAndRender();
+                    });
+                });
+            }
+            sortAndRender();
         }
         
         // Load jobs on page load if any exist

@@ -14,6 +14,7 @@ import csv
 import io
 from collections import defaultdict
 import sys
+from urllib.parse import urlparse
 
 # Import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -401,6 +402,76 @@ user_preferences = {'saved_searches': [], 'favorite_jobs': [], 'applied_jobs': [
 
 # Business Intelligence for Lead Generation (fallback)
 business_leads = []
+
+# --- Lead utilities ---
+_COMPANY_SUFFIXES = [
+    ' inc', ' inc.', ' llc', ' llc.', ' ltd', ' ltd.', ' limited', ' co', ' co.',
+    ' corp', ' corp.', ' corporation', ' gmbh', ' bv', ' plc'
+]
+
+_JOB_BOARD_DOMAINS = {
+    'linkedin.com','indeed.com','glassdoor.com','remoteok.com','weworkremotely.com','nodesk.co',
+    'remotive.com','adzuna.com','wellfound.com','angel.co','github.com','angel.co','stackoverflow.com'
+}
+
+def normalize_text(s: str) -> str:
+    s = (s or '').strip().lower()
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+def normalize_company(name: str) -> str:
+    n = normalize_text(name)
+    for suf in _COMPANY_SUFFIXES:
+        if n.endswith(suf):
+            n = n[: -len(suf)]
+            n = n.strip()
+    return n
+
+def normalize_title(title: str) -> str:
+    return normalize_text(title)
+
+def extract_domain(url: str) -> Optional[str]:
+    try:
+        if not url:
+            return None
+        parsed = urlparse(url)
+        host = (parsed.netloc or '').lower()
+        if host.startswith('www.'):
+            host = host[4:]
+        return host or None
+    except Exception:
+        return None
+
+def resolve_company_domain(job: Dict) -> Optional[str]:
+    # 1) Explicit website fields
+    for key in ('company_url','company_website','website','company_site'):
+        d = extract_domain(job.get(key, ''))
+        if d and d not in _JOB_BOARD_DOMAINS:
+            return d
+    # 2) If job URL is not a board (rare), use it
+    d = extract_domain(job.get('url', ''))
+    if d and d not in _JOB_BOARD_DOMAINS:
+        return d
+    # 3) Parse first external link in description
+    desc = job.get('description') or ''
+    urls = re.findall(r'https?://[^\s\)\]"\'>]+', desc)
+    for u in urls:
+        dom = extract_domain(u)
+        if dom and dom not in _JOB_BOARD_DOMAINS:
+            return dom
+    # 4) Use optional lead_enrichment provider if available
+    try:
+        if lead_enrichment is not None:
+            if hasattr(lead_enrichment, 'find_company_domain'):
+                dom = lead_enrichment.find_company_domain(job.get('company', ''))
+                if dom: return extract_domain('https://' + dom) or dom
+            if hasattr(lead_enrichment, 'get_company_domain'):
+                dom = lead_enrichment.get_company_domain(job.get('company', ''))
+                if dom: return extract_domain('https://' + dom) or dom
+    except Exception as e:
+        print(f"Domain enrichment error: {e}")
+    return None
 
 # Simplified Business Intelligence Functions
 def extract_company_intelligence(job: Dict) -> Dict:
@@ -1512,13 +1583,13 @@ def live_scrape():
                         if p == 'indeed':
                             return p, scrape_indeed_live(keywords, 20)
                         if p == 'weworkremotely':
-                            return p, scrape_weworkremotely_live(keywords, 20)
+                            return p, scrape_wwr_rss(keywords, 20)
                         if p == 'glassdoor':
                             return p, scrape_glassdoor_live(keywords, 20)
                         if p == 'wellfound':
                             return p, scrape_angellist_live(keywords, 20)
                         if p == 'nodesk':
-                            return p, scrape_nodesk_live(keywords, 15)
+                            return p, scrape_nodesk_rss(keywords, 15)
                         return p, []
                     except Exception as e:
                         print(f"   ❌ ERROR in {p} scraper (parallel): {e}")
@@ -1941,8 +2012,9 @@ def generate_leads_endpoint():
 
             company = job_with_intel.get('company', 'Unknown')
             title = job_with_intel.get('title', 'Unknown')
+            domain = resolve_company_domain(job_with_intel) or ''
             platform = job_with_intel.get('platform', 'Unknown')
-            key = f"{company}|{title}|{platform}"
+            key = f"{normalize_company(company)}|{normalize_title(title)}|{domain}"
             if key in seen:
                 continue
 
@@ -1955,6 +2027,7 @@ def generate_leads_endpoint():
                 'technologies': job_with_intel.get('technologies', []),
                 'company_size': job_with_intel.get('company_size', 'Unknown'),
                 'contact_potential': job_with_intel.get('contact_potential', ''),
+                'domain': domain,
                 'job_url': job_with_intel.get('url') or job_with_intel.get('original_url') or generate_working_job_url(job_with_intel),
                 'date_found': datetime.now().isoformat(),
                 'source': 'job-posting',
@@ -2010,9 +2083,10 @@ def generate_leads_endpoint():
 
 @app.route('/api/export-leads')
 def export_leads_endpoint():
-    """Export leads as CSV from DB if available, otherwise from memory."""
+    """Export leads as CSV; supports presets for common CRMs."""
     min_score = int(request.args.get('min_score', 0))
     limit = int(request.args.get('limit', 1000))
+    preset = (request.args.get('preset') or 'default').lower()
 
     # Gather leads
     leads: List[Dict] = []
@@ -2026,24 +2100,154 @@ def export_leads_endpoint():
         if len(leads) > limit:
             leads = leads[:limit]
 
-    # Build CSV in-memory
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=[
-        'company','title','location','platform','lead_score','technologies','company_size',
-        'contact_potential','contact_name','contact_title','contact_email','contact_linkedin','job_url','date_found'
-    ])
-    writer.writeheader()
-    for l in leads:
-        row = l.copy()
-        # Ensure technologies is a simple string
+    # Preset mappings
+    presets = {
+        'default': ['company','title','location','platform','lead_score','technologies','company_size','contact_potential','contact_name','contact_title','contact_email','contact_linkedin','domain','job_url','date_found'],
+        'hubspot': ['Company Name','Website Domain','Job Title','Lifecycle Stage','Original Source','Lead Score','Company Size','Contact Name','Contact Title','Contact Email','Contact LinkedIn','Job URL','Date Found'],
+        'pipedrive': ['Organization name','Organization domain','Person name','Person email','Title','Label','Lead score','Job URL','Date Found']
+    }
+
+    def map_row(preset_name: str, lead: Dict) -> Dict:
+        if preset_name == 'hubspot':
+            return {
+                'Company Name': lead.get('company',''),
+                'Website Domain': lead.get('domain',''),
+                'Job Title': lead.get('title',''),
+                'Lifecycle Stage': 'Lead',
+                'Original Source': lead.get('platform',''),
+                'Lead Score': lead.get('lead_score',''),
+                'Company Size': lead.get('company_size',''),
+                'Contact Name': lead.get('contact_name',''),
+                'Contact Title': lead.get('contact_title',''),
+                'Contact Email': lead.get('contact_email',''),
+                'Contact LinkedIn': lead.get('contact_linkedin',''),
+                'Job URL': lead.get('job_url',''),
+                'Date Found': lead.get('date_found',''),
+            }
+        if preset_name == 'pipedrive':
+            person_name = lead.get('contact_name') or ''
+            return {
+                'Organization name': lead.get('company',''),
+                'Organization domain': lead.get('domain',''),
+                'Person name': person_name,
+                'Person email': lead.get('contact_email',''),
+                'Title': lead.get('contact_title') or lead.get('title',''),
+                'Label': lead.get('platform',''),
+                'Lead score': lead.get('lead_score',''),
+                'Job URL': lead.get('job_url',''),
+                'Date Found': lead.get('date_found',''),
+            }
+        # default
+        row = lead.copy()
         techs = row.get('technologies')
         if isinstance(techs, list):
             row['technologies'] = ', '.join(techs)
-        writer.writerow({k: row.get(k, '') for k in writer.fieldnames})
+        return {k: row.get(k, '') for k in presets['default']}
+
+    headers = presets.get(preset, presets['default'])
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=headers)
+    writer.writeheader()
+    for l in leads:
+        writer.writerow(map_row(preset, l))
 
     mem = io.BytesIO(output.getvalue().encode('utf-8-sig'))
-    filename = f"leads_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"leads_{preset}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     return send_file(mem, mimetype='text/csv', as_attachment=True, download_name=filename)
+
+# --- RSS-based scrapers for WWR and NoDesk ---
+def scrape_wwr_rss(keywords: str, limit: int = 20) -> List[Dict]:
+    jobs: List[Dict] = []
+    try:
+        rss_url = 'https://weworkremotely.com/categories/remote-programming-jobs.rss'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(rss_url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(r.text)
+            items = root.findall('.//item')
+            k = (keywords or '').lower()
+            for item in items:
+                if len(jobs) >= limit:
+                    break
+                title = (item.findtext('title') or '').strip()
+                link = (item.findtext('link') or '').strip()
+                desc = (item.findtext('description') or '')
+                blob = f"{title} {desc}".lower()
+                if not k or any(w for w in k.split() if len(w)>2 and w in blob):
+                    jobs.append({
+                        'title': title,
+                        'company': 'WeWorkRemotely',
+                        'location': 'Remote',
+                        'platform': 'WeWorkRemotely',
+                        'url': link,
+                        'description': re.sub('<[^<]+?>', '', desc)[:300],
+                        'date_posted': datetime.now().strftime('%Y-%m-%d'),
+                        'id': f"wwr_{len(jobs)}",
+                        'lead_score': 50
+                    })
+    except Exception as e:
+        print(f"WWR RSS error: {e}")
+    if not jobs:
+        # small fallback
+        jobs = [{
+            'title': f'Remote {keywords.title()} Role',
+            'company': 'WeWorkRemotely',
+            'location': 'Remote',
+            'platform': 'WeWorkRemotely',
+            'url': 'https://weworkremotely.com',
+            'description': f'Fallback WWR listing for {keywords}',
+            'date_posted': datetime.now().strftime('%Y-%m-%d'),
+            'id': 'wwr_fallback',
+            'lead_score': 50
+        }]
+    return jobs
+
+def scrape_nodesk_rss(keywords: str, limit: int = 15) -> List[Dict]:
+    jobs: List[Dict] = []
+    try:
+        rss_url = 'https://nodesk.co/remote-jobs/feed/'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(rss_url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(r.text)
+            items = root.findall('.//item')
+            k = (keywords or '').lower()
+            for item in items:
+                if len(jobs) >= limit:
+                    break
+                title = (item.findtext('title') or '').strip()
+                link = (item.findtext('link') or '').strip()
+                desc = (item.findtext('description') or '')
+                blob = f"{title} {desc}".lower()
+                if not k or any(w for w in k.split() if len(w)>2 and w in blob):
+                    jobs.append({
+                        'title': title,
+                        'company': 'NoDesk',
+                        'location': 'Remote',
+                        'platform': 'NoDesk',
+                        'url': link,
+                        'description': re.sub('<[^<]+?>', '', desc)[:300],
+                        'date_posted': datetime.now().strftime('%Y-%m-%d'),
+                        'id': f"nodesk_{len(jobs)}",
+                        'lead_score': 50
+                    })
+    except Exception as e:
+        print(f"NoDesk RSS error: {e}")
+    if not jobs:
+        jobs = [{
+            'title': f'Remote {keywords.title()} Specialist',
+            'company': 'NoDesk',
+            'location': 'Remote',
+            'platform': 'NoDesk',
+            'url': 'https://nodesk.co/remote-jobs/',
+            'description': f'Fallback NoDesk listing for {keywords}',
+            'date_posted': datetime.now().strftime('%Y-%m-%d'),
+            'id': 'nodesk_fallback',
+            'lead_score': 50
+        }]
+    return jobs
 
 @app.route('/api/business-leads')
 def business_leads_endpoint():
