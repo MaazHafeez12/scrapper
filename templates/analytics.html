@@ -208,6 +208,14 @@
 </head>
 <body>
     <div class="container">
+        <div id="policyBanner" style="background:#fffbea;border:1px solid #f6e05e;color:#744210;padding:0.6rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">
+            <div>
+                <strong>Usage reminder:</strong>
+                <span id="policyText">Please respect robots.txt and site Terms of Service. Do not bypass login or CAPTCHA. Avoid collecting personal user data at scale.</span>
+                <span id="policyContact"></span>
+            </div>
+            <button onclick="document.getElementById('policyBanner').style.display='none'" style="background:#f6e05e;border:none;color:#744210;font-weight:700;border-radius:6px;padding:0.3rem 0.6rem;cursor:pointer;">Dismiss</button>
+        </div>
         <div class="header">
             <h1>📊 Analytics Dashboard</h1>
             <p>Data-driven insights for your job search</p>
@@ -295,6 +303,17 @@
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            // Load policy banner details
+            fetch('/api/policy').then(r=>r.json()).then(d=>{
+                if (d && d.success) {
+                    const txt = document.getElementById('policyText');
+                    if (txt && d.message) txt.textContent = d.message;
+                    if (d.contact_email) {
+                        const pc = document.getElementById('policyContact');
+                        pc.innerHTML = ` — Contact: <a href="mailto:${d.contact_email}">${d.contact_email}</a>`;
+                    }
+                }
+            }).catch(()=>{});
             loadAllData();
         });
         
@@ -444,7 +463,7 @@
                 
                 const ctx = document.getElementById('skillsChart').getContext('2d');
                 charts.skills = new Chart(ctx, {
-                    type: 'horizontalBar',
+                    type: 'bar',
                     data: {
                         labels: data.map(d => d.skill),
                         datasets: [{

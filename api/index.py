@@ -16,10 +16,17 @@ import io
 from collections import defaultdict
 import sys
 from urllib.parse import urlparse
+import logging
+from logging.handlers import RotatingFileHandler
+import smtplib
+from email.message import EmailMessage
+import hmac
+import hashlib
 
 # Import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import JobDatabase
+from functools import wraps
 
 # Import contact discovery module
 try:
@@ -264,14 +271,56 @@ except ImportError as e:
     JobPriority = None
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'vercel-demo-key')
-
-# Initialize database
+# Basic security defaults: use env SECRET_KEY if provided; otherwise a per-run random fallback
 try:
-    db = JobDatabase('business_leads.db')
+    import secrets
+    _default_secret = secrets.token_hex(16)
+except Exception:
+    _default_secret = 'change-me'
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.getenv('APP_SECRET', _default_secret))
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+)
+
+# --- Logging setup (rotating file) ---
+LOG_DIR = os.getenv('LOG_DIR', 'logs')
+LOG_FILE = os.getenv('LOG_FILE', os.path.join(LOG_DIR, 'app.log'))
+os.makedirs(LOG_DIR, exist_ok=True)
+logger = logging.getLogger('scrapper')
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    try:
+        fh = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3)
+        fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+    except Exception as e:
+        # Fallback to stdout
+        sh = logging.StreamHandler(sys.stdout)
+        fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        sh.setFormatter(fmt)
+        logger.addHandler(sh)
+
+# Initialize database (SQLite fallback only; Postgres used via DATABASE_URL in thin readers)
+try:
+    db = JobDatabase(os.getenv('DB_PATH', 'output/jobs.db'))
 except Exception as e:
     print(f"Database initialization error: {e}")
     db = None
+
+# Optional Postgres connectivity for read-only endpoints
+PG_URL = os.getenv('DATABASE_URL')
+
+def _pg_conn():
+    if not PG_URL:
+        return None
+    try:
+        import psycopg2  # type: ignore
+        return psycopg2.connect(PG_URL, sslmode=os.getenv('PG_SSLMODE','require'))
+    except Exception as e:
+        print(f"Postgres connect error: {e}")
+        return None
 
 # Initialize calendar integration
 calendar_integration = None
@@ -404,6 +453,164 @@ user_preferences = {'saved_searches': [], 'favorite_jobs': [], 'applied_jobs': [
 # Business Intelligence for Lead Generation (fallback)
 business_leads = []
 
+# Recent events for admin view
+recent_events: List[str] = []
+# Crawl tracking (in-memory fallbacks)
+last_crawl_summary: Dict = {}
+memory_crawl_logs: List[Dict] = []
+
+# Failure tracking for alerting
+failure_records: Dict[str, List[float]] = {}
+ALERT_ENABLED = os.getenv('ADMIN_ALERTS', '0') in ('1', 'true', 'True')
+ALERT_EMAIL = os.getenv('ADMIN_ALERT_EMAIL')
+SMTP_HOST = os.getenv('SMTP_HOST')
+SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+SMTP_USER = os.getenv('SMTP_USER')
+SMTP_PASS = os.getenv('SMTP_PASS')
+SMTP_FROM = os.getenv('SMTP_FROM', ALERT_EMAIL or 'scrapper@localhost')
+ALERT_THRESHOLD = int(os.getenv('ALERT_THRESHOLD', '3'))  # failures
+ALERT_WINDOW_SEC = int(os.getenv('ALERT_WINDOW_SEC', '600'))  # 10 minutes
+ALERT_COOLDOWN_SEC = int(os.getenv('ALERT_COOLDOWN_SEC', '1800'))  # 30 minutes
+last_alert_sent: Dict[str, float] = {}
+
+# --- Admin auth utilities ---
+ADMIN_TOKEN = os.getenv('ADMIN_TOKEN')
+ADMIN_USER = os.getenv('ADMIN_USER')
+ADMIN_PASS = os.getenv('ADMIN_PASS')
+
+def _check_bearer(req) -> bool:
+    auth = req.headers.get('Authorization') or ''
+    if auth.lower().startswith('bearer '):
+        token = auth.split(' ', 1)[1].strip()
+        return bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
+    return False
+
+def _check_basic(req) -> bool:
+    if not (ADMIN_USER and ADMIN_PASS):
+        return False
+    try:
+        import base64
+        auth = req.headers.get('Authorization') or ''
+        if not auth.lower().startswith('basic '):
+            return False
+        raw = auth.split(' ', 1)[1]
+        userpass = base64.b64decode(raw).decode('utf-8', errors='ignore')
+        if ':' not in userpass:
+            return False
+        u, p = userpass.split(':', 1)
+        return (u == ADMIN_USER and p == ADMIN_PASS)
+    except Exception:
+        return False
+
+def is_admin_request(req) -> bool:
+    # Prefer token if provided
+    if ADMIN_TOKEN:
+        if req.headers.get('X-Admin-Token') == ADMIN_TOKEN:
+            return True
+        if req.args.get('admin_token') == ADMIN_TOKEN:
+            return True
+        if _check_bearer(req):
+            return True
+    # Fallback to basic auth if configured
+    if _check_basic(req):
+        return True
+    return False
+
+def admin_required(fn):
+    @wraps(fn)
+    def _wrapped(*args, **kwargs):
+        if is_admin_request(request):
+            return fn(*args, **kwargs)
+        # If basic auth configured, advertise challenge
+        resp = jsonify({'success': False, 'error': 'admin auth required'})
+        status = 401
+        try:
+            from flask import make_response
+            r = make_response(resp, status)
+            if ADMIN_USER and ADMIN_PASS:
+                r.headers['WWW-Authenticate'] = 'Basic realm="Admin"'
+            return r
+        except Exception:
+            return resp, status
+    return _wrapped
+
+def log_event(message: str):
+    try:
+        ts = datetime.now().strftime('%H:%M:%S')
+        entry = f"[{ts}] {message}"
+        print(entry)
+        try:
+            logger.info(message)
+        except Exception:
+            pass
+        recent_events.append(entry)
+        if len(recent_events) > 200:
+            del recent_events[0:len(recent_events)-200]
+    except Exception:
+        pass
+
+def record_failure(domain: str, reason: str):
+    if not domain:
+        return
+    now = time.time()
+    arr = failure_records.get(domain, [])
+    arr.append(now)
+    # keep only within window
+    cutoff = now - ALERT_WINDOW_SEC
+    arr = [t for t in arr if t >= cutoff]
+    failure_records[domain] = arr
+    # maybe alert
+    if ALERT_ENABLED and ALERT_EMAIL and SMTP_HOST:
+        if len(arr) >= ALERT_THRESHOLD:
+            last_sent = last_alert_sent.get(domain, 0)
+            if now - last_sent >= ALERT_COOLDOWN_SEC:
+                try:
+                    send_admin_alert(domain, len(arr), reason)
+                    last_alert_sent[domain] = now
+                except Exception as e:
+                    logger.error(f"Alert send failed for {domain}: {e}")
+
+def send_admin_alert(domain: str, count: int, reason: str):
+    subj = f"Scrapper alert: repeated failures for {domain} ({count} in last {ALERT_WINDOW_SEC//60}m)"
+    body = f"Domain: {domain}\nFailures in window: {count}\nLast reason: {reason}\nTime: {datetime.utcnow().isoformat()}Z\n"
+    msg = EmailMessage()
+    msg['Subject'] = subj
+    msg['From'] = SMTP_FROM
+    msg['To'] = ALERT_EMAIL
+    msg.set_content(body)
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
+        try:
+            s.starttls()
+        except Exception:
+            pass
+        if SMTP_USER and SMTP_PASS:
+            s.login(SMTP_USER, SMTP_PASS)
+        s.send_message(msg)
+
+def tail_log(path: str, lines: int = 20) -> List[str]:
+    out: List[str] = []
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            block = -1
+            data = b''
+            while len(out) <= lines and abs(block) * 1024 < size + 1024:
+                try:
+                    f.seek(block * 1024, os.SEEK_END)
+                except OSError:
+                    f.seek(0)
+                    data = f.read()
+                    break
+                chunk = f.read(1024)
+                data = chunk + data
+                out = data.splitlines()
+                block -= 1
+            out = [l.decode('utf-8', errors='replace') for l in out[-lines:]]
+    except Exception:
+        pass
+    return out
+
 # --- Lead utilities ---
 _COMPANY_SUFFIXES = [
     ' inc', ' inc.', ' llc', ' llc.', ' ltd', ' ltd.', ' limited', ' co', ' co.',
@@ -473,6 +680,134 @@ def resolve_company_domain(job: Dict) -> Optional[str]:
     except Exception as e:
         print(f"Domain enrichment error: {e}")
     return None
+
+# --- Per-domain rate limiting + fetch helper ---
+class DomainRateLimiter:
+    def __init__(self, capacity: int = 5, refill_per_sec: float = 2.0):
+        # capacity: max tokens per domain; refill_per_sec: tokens per second
+        self.capacity = capacity
+        self.refill_per_sec = refill_per_sec
+        self.state = {}
+        self.lock = threading.Lock()
+
+    def acquire(self, domain: str):
+        if not domain:
+            return
+        now = time.time()
+        with self.lock:
+            tokens, last = self.state.get(domain, (self.capacity, now))
+            # Refill tokens
+            delta = now - last
+            tokens = min(self.capacity, tokens + delta * self.refill_per_sec)
+            if tokens < 1.0:
+                # Need to wait
+                wait = (1.0 - tokens) / self.refill_per_sec
+                wait = max(0.0, min(wait, 2.0))  # cap wait
+                time.sleep(wait)
+                now2 = time.time()
+                delta2 = now2 - now
+                tokens = min(self.capacity, tokens + delta2 * self.refill_per_sec)
+                now = now2
+            tokens -= 1.0
+            self.state[domain] = (tokens, now)
+
+import random as _random
+RESPECT_ROBOTS = os.getenv('RESPECT_ROBOTS', '1') in ('1','true','True')
+ALLOW_ROBOTS_BYPASS = os.getenv('ALLOW_ROBOTS_BYPASS', '0') in ('1','true','True')
+SCRAPER_BASE_DELAY_SEC = float(os.getenv('SCRAPER_BASE_DELAY_SEC', '2.0'))
+SCRAPER_MAX_DELAY_SEC = float(os.getenv('SCRAPER_MAX_DELAY_SEC', '5.0'))
+_PER_DOMAIN_CAP = float(os.getenv('SCRAPER_PER_DOMAIN_CAP', '2'))  # token bucket capacity
+_PER_DOMAIN_RPS = float(os.getenv('SCRAPER_PER_DOMAIN_RPS', '0.5'))  # ~1 req per 2s
+rate_limiter_dl = DomainRateLimiter(capacity=int(_PER_DOMAIN_CAP), refill_per_sec=_PER_DOMAIN_RPS)
+
+# robots.txt checker with caching
+class RobotsCache:
+    def __init__(self):
+        self.cache = {}
+        self.ttl = int(os.getenv('ROBOTS_TTL_SEC', '3600'))
+
+    def can_fetch(self, url: str, ua: str) -> bool:
+        try:
+            dom = extract_domain(url) or ''
+            if not dom:
+                return True
+            now = time.time()
+            entry = self.cache.get(dom)
+            if not entry or now - entry['ts'] > self.ttl:
+                robots_url = f"https://{dom}/robots.txt"
+                try:
+                    import urllib.robotparser as rp
+                    r = rp.RobotFileParser()
+                    r.set_url(robots_url)
+                    r.read()
+                    entry = {'ts': now, 'rp': r}
+                except Exception:
+                    # On failure to read robots, default allow
+                    entry = {'ts': now, 'rp': None}
+                self.cache[dom] = entry
+            r = entry['rp']
+            if r is None:
+                return True
+            return bool(r.can_fetch(ua, url))
+        except Exception:
+            return True
+
+robots_cache = RobotsCache()
+
+# Contact details for ethical crawling: include email in User-Agent if provided
+SCRAPER_UA_NAME = os.getenv('SCRAPER_UA_NAME', 'JobScraperMVP/1.0')
+CONTACT_EMAIL = os.getenv('CONTACT_EMAIL')
+
+def fetch_url(url: str, headers: Optional[Dict] = None, timeout: int = 15):
+    domain = extract_domain(url) or ''
+    try:
+        rate_limiter_dl.acquire(domain)
+    except Exception:
+        pass
+    # polite base delay (env-driven)
+    try:
+        delay = max(0.0, min(SCRAPER_MAX_DELAY_SEC, SCRAPER_BASE_DELAY_SEC))
+        if SCRAPER_MAX_DELAY_SEC > SCRAPER_BASE_DELAY_SEC:
+            delay = _random.uniform(SCRAPER_BASE_DELAY_SEC, SCRAPER_MAX_DELAY_SEC)
+        time.sleep(delay)
+    except Exception:
+        pass
+    # Compose default headers with contact email in UA and From
+    if not headers:
+        ua = f"{SCRAPER_UA_NAME}"
+        if CONTACT_EMAIL:
+            ua += f" (+mailto:{CONTACT_EMAIL})"
+        # Add a common browser UA tail to reduce blocks while still including contact
+        ua += "; Mozilla/5.0"
+        headers = {'User-Agent': ua}
+        if CONTACT_EMAIL:
+            headers['From'] = CONTACT_EMAIL
+    elif 'User-Agent' not in headers:
+        # Ensure UA present even if custom headers provided
+        ua = f"{SCRAPER_UA_NAME}"
+        if CONTACT_EMAIL:
+            ua += f" (+mailto:{CONTACT_EMAIL})"
+        ua += "; Mozilla/5.0"
+        headers['User-Agent'] = ua
+        if CONTACT_EMAIL and 'From' not in headers:
+            headers['From'] = CONTACT_EMAIL
+    # robots.txt compliance
+    if RESPECT_ROBOTS and not ALLOW_ROBOTS_BYPASS:
+        try:
+            can = robots_cache.can_fetch(url, headers.get('User-Agent','*'))
+            if not can:
+                log_event(f"robots.txt disallow for {domain} path {url}")
+                class _Blocked:
+                    def __init__(self, u: str):
+                        self.status_code = 403
+                        self.content = b''
+                        self.text = 'Blocked by robots.txt'
+                        self.headers = {}
+                        self.url = u
+                return _Blocked(url)
+        except Exception:
+            pass
+    return requests.get(url, headers=headers, timeout=timeout)
 
 # Simplified Business Intelligence Functions
 def extract_company_intelligence(job: Dict) -> Dict:
@@ -784,7 +1119,7 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
         }
         
         print(f"   Making request to {url}...")
-        response = requests.get(url, headers=headers, timeout=15)
+        response = fetch_url(url, headers=headers, timeout=15)
         print(f"   Response status: {response.status_code}")
         
         if response.status_code == 200:
@@ -842,7 +1177,7 @@ def scrape_remoteok_live(keywords: str, limit: int = 20) -> List[Dict]:
         try:
             url = "https://remoteok.com/api"
             headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=15)
+            response = fetch_url(url, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 count = 0
@@ -915,7 +1250,7 @@ def scrape_indeed_live(keywords: str, limit: int = 20) -> List[Dict]:
         }
         
         url = f"https://www.indeed.com/jobs?q={quote(keywords)}&l=remote"
-        response = requests.get(url, headers=headers, timeout=15)
+        response = fetch_url(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -1010,7 +1345,7 @@ def scrape_weworkremotely_live(keywords: str, limit: int = 20) -> List[Dict]:
         }
         
         url = f"https://weworkremotely.com/remote-jobs/search?utf8=%E2%9C%93&term={quote(keywords)}"
-        response = requests.get(url, headers=headers, timeout=15)
+        response = fetch_url(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -1067,7 +1402,7 @@ def scrape_glassdoor_live(keywords: str, limit: int = 20) -> List[Dict]:
         }
         
         url = f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={quote(keywords)}&locT=N&locId=11047&jobType=fulltime"
-        response = requests.get(url, headers=headers, timeout=10)
+        response = fetch_url(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -1131,7 +1466,7 @@ def scrape_angellist_live(keywords: str, limit: int = 20) -> List[Dict]:
         for base_url in ['https://angel.co', 'https://wellfound.com']:
             try:
                 url = f"{base_url}/jobs?keywords={quote(keywords)}"
-                response = requests.get(url, headers=headers, timeout=10)
+                response = fetch_url(url, headers=headers, timeout=10)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.content, 'html.parser')
@@ -1190,7 +1525,7 @@ def scrape_github_jobs(keywords: str, limit: int = 30) -> List[Dict]:
         # GitHub Jobs is deprecated, using RemoteOK API as alternative
         url = "https://remoteok.com/api"
         headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=15)
+        response = fetch_url(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -1226,7 +1561,7 @@ def scrape_adzuna_jobs(keywords: str, limit: int = 30) -> List[Dict]:
     try:
         # Using Adzuna's public search (no key needed for basic search)
         url = f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=test&app_key=test&results_per_page={limit}&what={quote(keywords)}&where=remote"
-        response = requests.get(url, timeout=15)
+        response = fetch_url(url, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -1258,7 +1593,7 @@ def scrape_remotive_jobs(keywords: str, limit: int = 20) -> List[Dict]:
     try:
         q = quote(keywords)
         url = f"https://remotive.com/api/remote-jobs?search={q}"
-        response = requests.get(url, timeout=12)
+        response = fetch_url(url, timeout=12)
         if response.status_code == 200:
             data = response.json()
             items = data.get('jobs', [])
@@ -1292,7 +1627,7 @@ def scrape_arbeitnow_jobs(keywords: str, limit: int = 20) -> List[Dict]:
     try:
         # The API is paginated; fetch the first page and filter client-side
         url = "https://www.arbeitnow.com/api/job-board-api"
-        response = requests.get(url, timeout=12)
+        response = fetch_url(url, timeout=12)
         if response.status_code == 200:
             data = response.json()
             items = data.get('data', [])
@@ -1357,7 +1692,7 @@ def scrape_nodesk_live(keywords: str, limit: int = 20) -> List[Dict]:
         }
         
         url = f"https://nodesk.co/remote-jobs/"
-        response = requests.get(url, headers=headers, timeout=10)
+        response = fetch_url(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -1505,6 +1840,655 @@ def new_dashboard():
     """New clickable job scraper dashboard."""
     return send_from_directory('../templates', 'dashboard.html')
 
+@app.route('/api/policy')
+def policy_info():
+    """Public policy info: ethics banner content and contact email for site owners."""
+    try:
+        banner = (
+            "Please respect robots.txt and site Terms of Service. Do not bypass login or CAPTCHA. "
+            "Avoid collecting personal user data at scale. If you're a site owner and have concerns, contact us."
+        )
+        return jsonify({
+            'success': True,
+            'message': banner,
+            'contact_email': CONTACT_EMAIL,
+            'ua_name': SCRAPER_UA_NAME
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ----------------------
+# Orchestrator endpoints (Vercel-style thin APIs)
+# ----------------------
+
+def _hmac_signature(secret: str, body: bytes) -> str:
+    try:
+        return hmac.new(secret.encode('utf-8'), body, hashlib.sha256).hexdigest()
+    except Exception:
+        return ''
+
+@app.route('/api/enqueue-crawl', methods=['POST'])
+def api_enqueue_crawl():
+    """Thin orchestrator endpoint that forwards crawl requests to a Worker webhook.
+
+    Env:
+      - WORKER_WEBHOOK_URL: external worker endpoint
+      - WORKER_WEBHOOK_SECRET: HMAC secret for signature
+    """
+    body = request.get_json(silent=True) or {}
+    urls = body.get('urls') or []
+    if not isinstance(urls, list) or not urls:
+        return jsonify({'success': False, 'error': 'urls must be non-empty array'}), 400
+    worker_url = os.getenv('WORKER_WEBHOOK_URL')
+    secret = os.getenv('WORKER_WEBHOOK_SECRET')
+    if not worker_url or not secret:
+        return jsonify({'success': False, 'error': 'worker webhook not configured'}), 501
+    payload = {
+        'urls': urls,
+        'keywords': body.get('keywords') or [],
+        'maxLinksPerListing': int(body.get('maxLinksPerListing') or body.get('max_links_per_listing') or 25),
+        'minScore': int(body.get('minScore') or body.get('min_score') or 0),
+        'options': {
+            'respectRobots': True,
+            'depth': 1,
+            'snapshots': bool(body.get('snapshots', False))
+        }
+    }
+    raw = json.dumps(payload).encode('utf-8')
+    sig = _hmac_signature(secret, raw)
+    try:
+        r = requests.post(worker_url, data=raw, headers={
+            'Content-Type': 'application/json',
+            'X-Webhook-Signature': sig,
+        }, timeout=12)
+        if r.status_code in (200, 201, 202):
+            try:
+                data = r.json()
+            except Exception:
+                data = {}
+            return jsonify({'success': True, 'status': r.status_code, 'worker_response': data}), 202
+        return jsonify({'success': False, 'status': r.status_code, 'text': r.text[:500]}), r.status_code
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 502
+
+@app.route('/api/read-jobs')
+def api_read_jobs():
+    """Read jobs with filters for UI. Thin DB reader suitable for Vercel frontends."""
+    search = (request.args.get('search') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    has_budget = request.args.get('has_budget', '0') in ('1','true','True')
+    min_score = int(request.args.get('min_score', 0))
+    sort = (request.args.get('sort') or 'recent').strip()  # score_desc|score_asc|recent
+    limit = int(request.args.get('limit', 50))
+    offset = int(request.args.get('offset', 0))
+    rows: List[Dict] = []
+    total = 0
+    try:
+        # Prefer Postgres if configured
+        if PG_URL:
+            conn = _pg_conn()
+            if not conn:
+                raise RuntimeError('cannot connect to Postgres')
+            try:
+                import psycopg2.extras  # type: ignore
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            except Exception:
+                cur = conn.cursor()
+            sql = 'SELECT * FROM jobs WHERE 1=1'
+            params: List = []
+            if search:
+                sql += ' AND (title ILIKE %s OR company ILIKE %s OR description ILIKE %s OR url ILIKE %s OR COALESCE(source_listing,\'\') ILIKE %s)'
+                pattern = f"%{search}%"
+                params.extend([pattern, pattern, pattern, pattern, pattern])
+            if source:
+                sql += ' AND (COALESCE(source_listing,\'\') ILIKE %s OR COALESCE(platform,\'\') ILIKE %s)'
+                sp = f"%{source}%"
+                params.extend([sp, sp])
+            # Count total
+            count_sql = f'SELECT COUNT(*) FROM ({sql}) t'
+            cur.execute(count_sql, params)
+            row = cur.fetchone()
+            total = int(row['count'] if isinstance(row, dict) else (row[0] if row else 0))
+            # Sort
+            order = 'COALESCE(crawled_at, first_seen) DESC'
+            if sort == 'score_desc':
+                order = 'COALESCE(lead_score, 0) DESC, COALESCE(crawled_at, first_seen) DESC'
+            elif sort == 'score_asc':
+                order = 'COALESCE(lead_score, 0) ASC, COALESCE(crawled_at, first_seen) DESC'
+            sql += f' ORDER BY {order} LIMIT %s OFFSET %s'
+            cur.execute(sql, params + [limit, offset])
+            fetched = cur.fetchall()
+            try:
+                rows = [dict(r) for r in fetched]
+            except Exception:
+                # map tuples minimally if RealDictCursor unavailable
+                rows = []
+                cols = [c[0] for c in cur.description]
+                for t in fetched:
+                    rows.append({k:v for k,v in zip(cols, t)})
+            cur.close(); conn.close()
+        elif db:
+            db.connect()
+            cur = db.conn.cursor()
+            sql = 'SELECT * FROM jobs WHERE 1=1'
+            params: List = []
+            if search:
+                sql += ' AND (title LIKE ? OR company LIKE ? OR description LIKE ? OR url LIKE ? OR source_listing LIKE ?)' 
+                pattern = f'%{search}%'
+                params.extend([pattern, pattern, pattern, pattern, pattern])
+            if source:
+                sql += ' AND (source_listing LIKE ? OR platform LIKE ?)'
+                sp = f'%{source}%'
+                params.extend([sp, sp])
+            # Count total
+            count_sql = 'SELECT COUNT(*) FROM (' + sql + ') as t'
+            cur.execute(count_sql, params)
+            total = cur.fetchone()[0]
+            # Ordering
+            order = 'COALESCE(crawled_at, first_seen) DESC'
+            if sort == 'score_desc':
+                order = 'COALESCE(lead_score, 0) DESC, COALESCE(crawled_at, first_seen) DESC'
+            elif sort == 'score_asc':
+                order = 'COALESCE(lead_score, 0) ASC, COALESCE(crawled_at, first_seen) DESC'
+            sql += f' ORDER BY {order} LIMIT ? OFFSET ?'
+            cur.execute(sql, params + [limit, offset])
+            rows = [dict(r) for r in cur.fetchall()]
+        else:
+            rows = live_jobs[:]
+            # Basic filters on in-memory rows
+            if search:
+                s = search.lower()
+                rows = [j for j in rows if s in (j.get('title','')+j.get('company','')+j.get('description','')+j.get('url','')+j.get('source_listing','')).lower()]
+            if source:
+                s = source.lower()
+                rows = [j for j in rows if s in (j.get('source_listing','').lower() + ' ' + (j.get('platform','') or '').lower())]
+            total = len(rows)
+            # Sort
+            if sort == 'score_desc':
+                rows.sort(key=lambda x: x.get('lead_score') or 0, reverse=True)
+            elif sort == 'score_asc':
+                rows.sort(key=lambda x: x.get('lead_score') or 0)
+            else:
+                rows.sort(key=lambda x: (x.get('crawled_at') or x.get('first_seen') or ''), reverse=True)
+            rows = rows[offset: offset+limit]
+
+        # Compute has_budget and fallback score
+        def compute_has_budget(j):
+            txt = (j.get('description') or '') + ' ' + (j.get('salary') or j.get('salary_range') or '')
+            t = txt.lower()
+            return any(w in t for w in ['salary', '$', 'usd', 'eur', 'compensation', 'budget', 'rate', 'per hour', 'per annum', 'k'])
+        out = []
+        for j in rows:
+            if j.get('lead_score') is None:
+                try:
+                    intel = extract_company_intelligence(j)
+                    j['lead_score'] = intel.get('lead_score', 0)
+                except Exception:
+                    j['lead_score'] = 0
+            j['has_budget'] = compute_has_budget(j)
+            out.append(j)
+        if has_budget:
+            out = [j for j in out if j.get('has_budget')]
+        if min_score > 0:
+            out = [j for j in out if (j.get('lead_score') or 0) >= min_score]
+        return jsonify({'success': True, 'total': total, 'results': out})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/read-leads')
+def api_read_leads():
+    min_score = int(request.args.get('min_score', 0))
+    limit = int(request.args.get('limit', 50))
+    try:
+        leads = []
+        if PG_URL:
+            conn = _pg_conn()
+            if not conn:
+                raise RuntimeError('cannot connect to Postgres')
+            try:
+                import psycopg2.extras  # type: ignore
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            except Exception:
+                cur = conn.cursor()
+            # Prefer a business_leads table; fallback to leads if present
+            table = 'business_leads'
+            try:
+                cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = %s", (table,))
+                if not cur.fetchone():
+                    table = 'leads'
+            except Exception:
+                pass
+            cur.execute(f'''SELECT * FROM {table} WHERE COALESCE(lead_score,0) >= %s ORDER BY lead_score DESC, date_found DESC NULLS LAST LIMIT %s''', (min_score, limit))
+            fetched = cur.fetchall()
+            try:
+                leads = [dict(r) for r in fetched]
+            except Exception:
+                cols = [c[0] for c in cur.description]
+                leads = [{k:v for k,v in zip(cols, t)} for t in fetched]
+            cur.close(); conn.close()
+        elif db and hasattr(db, 'get_business_leads'):
+            leads = db.get_business_leads(limit=limit, min_score=min_score)
+        else:
+            # Fallback
+            leads = [l for l in business_leads if (l.get('lead_score') or 0) >= min_score][:limit]
+        return jsonify({'success': True, 'results': leads})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ----------------------
+# Outreach: templates, preview, send, webhooks
+# ----------------------
+
+OUTREACH_DAILY_CAP = int(os.getenv('OUTREACH_DAILY_CAP', '20'))
+OUTREACH_PER_DOMAIN_CAP = int(os.getenv('OUTREACH_PER_DOMAIN_CAP', '5'))
+
+def _render_placeholders(text: str, context: Dict) -> str:
+    """Very small placeholder renderer supporting {{var}} and {{var|fallback}}."""
+    if not text:
+        return ''
+    def repl(match):
+        inner = match.group(1).strip()
+        if '|' in inner:
+            key, fallback = inner.split('|', 1)
+            key = key.strip()
+            fallback = fallback.strip()
+            return str(context.get(key, fallback) or fallback)
+        return str(context.get(inner, ''))
+    try:
+        return re.sub(r"\{\{\s*([^}]+)\s*\}\}", repl, text)
+    except Exception:
+        return text
+
+def _sender_context() -> Dict:
+    return {
+        'your_name': os.getenv('SENDER_NAME', ''),
+        'your_offer': os.getenv('SENDER_OFFER', ''),
+        'sender_name': os.getenv('SENDER_NAME', ''),
+        'sender_email': os.getenv('SENDER_EMAIL', CONTACT_EMAIL or os.getenv('EMAIL_FROM', '')),
+    }
+
+@app.route('/api/templates', methods=['GET', 'POST'])
+def api_templates():
+    if request.method == 'GET':
+        try:
+            rows = db.list_templates() if db else []
+            return jsonify({'success': True, 'results': rows})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    # POST: upsert a template
+    data = request.get_json(silent=True) or {}
+    tid = (data.get('id') or '').strip() or f"tpl_{int(time.time())}"
+    name = (data.get('name') or '').strip() or tid
+    subject = data.get('subject') or ''
+    body = data.get('body') or ''
+    try:
+        if not db:
+            return jsonify({'success': False, 'error': 'db not available'}), 501
+        db.save_template(id=tid, name=name, subject=subject, body=body)
+        return jsonify({'success': True, 'id': tid})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/outreach/preview', methods=['POST'])
+def api_outreach_preview():
+    """Render a subject/body preview with placeholders for a lead/job context."""
+    data = request.get_json(silent=True) or {}
+    subject = data.get('subject') or ''
+    body = data.get('body') or ''
+    lead = data.get('lead') or {}
+    # Accept simple aliases
+    ctx = {
+        'first_name': lead.get('first_name') or lead.get('contact_name') or 'there',
+        'company': lead.get('company') or '',
+        'job_title': lead.get('title') or '',
+        'title': lead.get('title') or '',
+        'company_name': lead.get('company') or '',
+        'tech_stack': lead.get('tech_stack') or ', '.join(lead.get('technologies') or []),
+        **_sender_context()
+    }
+    try:
+        return jsonify({
+            'success': True,
+            'subject': _render_placeholders(subject, ctx),
+            'body': _render_placeholders(body, ctx)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def _check_outreach_caps(to_email: str) -> Optional[str]:
+    try:
+        # Global daily cap
+        if db and OUTREACH_DAILY_CAP > 0:
+            if db.count_sent_today() >= OUTREACH_DAILY_CAP:
+                return f'daily send cap reached ({OUTREACH_DAILY_CAP})'
+        # Per-domain cap
+        dom = (to_email.split('@')[-1]).lower() if '@' in to_email else ''
+        if db and OUTREACH_PER_DOMAIN_CAP > 0 and dom:
+            if db.count_sent_today_by_domain(dom) >= OUTREACH_PER_DOMAIN_CAP:
+                return f'per-domain cap reached for {dom} ({OUTREACH_PER_DOMAIN_CAP})'
+    except Exception:
+        pass
+    return None
+
+@app.route('/api/outreach/send', methods=['POST'])
+def api_outreach_send():
+    """Manual send that enforces caps and records outreach_logs."""
+    payload = request.get_json(silent=True) or {}
+    to = (payload.get('to') or '').strip()
+    subject = (payload.get('subject') or '').strip()
+    text = (payload.get('text') or '').strip()
+    if not to or not subject or not text:
+        return jsonify({'success': False, 'error': 'to, subject and text required'}), 400
+    cap_err = _check_outreach_caps(to)
+    if cap_err:
+        return jsonify({'success': False, 'error': cap_err}), 429
+    # Render placeholders if provided lead context
+    lead = payload.get('lead') or {}
+    if lead:
+        ctx = {
+            'first_name': lead.get('first_name') or lead.get('contact_name') or 'there',
+            'company': lead.get('company') or '',
+            'job_title': lead.get('title') or '',
+            'title': lead.get('title') or '',
+            'company_name': lead.get('company') or '',
+            'tech_stack': lead.get('tech_stack') or ', '.join(lead.get('technologies') or []),
+            **_sender_context()
+        }
+        subject = _render_placeholders(subject, ctx)
+        text = _render_placeholders(text, ctx)
+
+    # Send using the existing /api/send-email logic but inline to capture provider ids
+    SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+    transport = 'sendgrid' if SENDGRID_API_KEY else ('smtp' if SMTP_HOST else 'none')
+    log_id = None
+    try:
+        if db:
+            log_id = db.record_outreach(
+                to_email=to, subject=subject, body=text, transport=transport,
+                status='queued', lead_id=payload.get('lead_id'), job_id=payload.get('job_id'),
+                sequence_name=payload.get('sequence_name'), sequence_step=payload.get('sequence_step'),
+                template_id=payload.get('template_id')
+            )
+    except Exception:
+        pass
+
+    # Perform send
+    if SENDGRID_API_KEY:
+        try:
+            sg_url = 'https://api.sendgrid.com/v3/mail/send'
+            data = {
+                'personalizations': [ {'to':[{'email': to}], 'custom_args': {'outreach_id': str(log_id) if log_id else ''}} ],
+                'from': {'email': os.getenv('EMAIL_FROM', CONTACT_EMAIL or 'no-reply@example.com')},
+                'subject': subject,
+                'content': [{'type': 'text/plain', 'value': text}]
+            }
+            r = requests.post(sg_url, headers={
+                'Authorization': f'Bearer {SENDGRID_API_KEY}',
+                'Content-Type': 'application/json'
+            }, data=json.dumps(data), timeout=10)
+            ok = 200 <= r.status_code < 300 or r.status_code == 202
+            if db and log_id:
+                db.update_outreach_status(id=log_id, status='sent' if ok else 'failed', timestamp_field='sent_at', error=None if ok else r.text[:400])
+            return jsonify({'success': ok, 'status': r.status_code, 'id': log_id, 'text': None if ok else r.text[:500]}), (200 if ok else r.status_code)
+        except Exception as e:
+            if db and log_id:
+                db.update_outreach_status(id=log_id, status='failed', error=str(e))
+            return jsonify({'success': False, 'error': str(e)}), 500
+    # SMTP path
+    if SMTP_HOST:
+        try:
+            msg = EmailMessage()
+            msg['Subject'] = subject
+            msg['From'] = os.getenv('EMAIL_FROM', CONTACT_EMAIL or SMTP_USER or 'no-reply@example.com')
+            msg['To'] = to
+            msg.set_content(text)
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+                try:
+                    s.starttls()
+                except Exception:
+                    pass
+                if SMTP_USER and SMTP_PASS:
+                    s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+            if db and log_id:
+                db.update_outreach_status(id=log_id, status='sent', timestamp_field='sent_at')
+            return jsonify({'success': True, 'status': 250, 'id': log_id})
+        except Exception as e:
+            if db and log_id:
+                db.update_outreach_status(id=log_id, status='failed', error=str(e))
+            return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': False, 'error': 'email service not configured'}), 501
+
+@app.route('/api/send-email', methods=['POST'])
+def api_send_email():
+    """Send email via SendGrid if configured, else 501.
+
+    Body: { to, subject, text }
+    """
+    SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+    payload = request.get_json(silent=True) or {}
+    to = (payload.get('to') or '').strip()
+    subject = (payload.get('subject') or '').strip()
+    text = (payload.get('text') or '').strip()
+    if not to or not subject or not text:
+        return jsonify({'success': False, 'error': 'to, subject and text required'}), 400
+    # Path A: SendGrid HTTP API
+    if SENDGRID_API_KEY:
+        try:
+            sg_url = 'https://api.sendgrid.com/v3/mail/send'
+            data = {
+                'personalizations': [ {'to':[{'email': to}]} ],
+                'from': {'email': os.getenv('EMAIL_FROM', CONTACT_EMAIL or 'no-reply@example.com')},
+                'subject': subject,
+                'content': [{'type': 'text/plain', 'value': text}]
+            }
+            r = requests.post(sg_url, headers={
+                'Authorization': f'Bearer {SENDGRID_API_KEY}',
+                'Content-Type': 'application/json'
+            }, data=json.dumps(data), timeout=10)
+            ok = 200 <= r.status_code < 300 or r.status_code == 202
+            try:
+                if db:
+                    status = 'sent' if ok else 'failed'
+                    db.record_outreach(to_email=to, subject=subject, body=text, transport='sendgrid', status=status)
+            except Exception:
+                pass
+            if ok:
+                return jsonify({'success': True, 'status': r.status_code})
+            return jsonify({'success': False, 'status': r.status_code, 'text': r.text[:500]}), r.status_code
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    # Path B: SMTP fallback (supports SendGrid SMTP or any SMTP server)
+    host = os.getenv('SMTP_HOST')
+    user = os.getenv('SMTP_USER')
+    pwd = os.getenv('SMTP_PASS')
+    port = int(os.getenv('SMTP_PORT', '587'))
+    mail_from = os.getenv('EMAIL_FROM', CONTACT_EMAIL or user or 'no-reply@example.com')
+    if not host:
+        return jsonify({'success': False, 'error': 'email service not configured'}), 501
+    try:
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = mail_from
+        msg['To'] = to
+        msg.set_content(text)
+        with smtplib.SMTP(host, port, timeout=15) as s:
+            try:
+                s.starttls()
+            except Exception:
+                pass
+            if user and pwd:
+                s.login(user, pwd)
+            s.send_message(msg)
+        try:
+            if db:
+                db.record_outreach(to_email=to, subject=subject, body=text, transport='smtp', status='sent')
+        except Exception:
+            pass
+        return jsonify({'success': True, 'status': 250})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/webhooks/sendgrid', methods=['POST'])
+def api_webhook_sendgrid():
+    """Receive SendGrid Event Webhook and update outreach_logs statuses.
+
+    Note: Signature verification is recommended in production (omitted for MVP).
+    """
+    try:
+        events = request.get_json(silent=True)
+        if not isinstance(events, list):
+            return jsonify({'success': False, 'error': 'expected array of events'}), 400
+        updated = 0
+        for ev in events:
+            evt = (ev.get('event') or '').lower()
+            msg_id = ev.get('sg_message_id') or ev.get('smtp-id') or ev.get('smtp-id')
+            email = ev.get('email')
+            status = None
+            if evt == 'delivered':
+                status = 'delivered'
+            elif evt == 'open' or evt == 'opened':
+                status = 'opened'
+            elif evt == 'click' or evt == 'clicked':
+                status = 'clicked'
+            elif evt == 'bounce' or evt == 'dropped':
+                status = 'bounced'
+            elif evt == 'spamreport' or evt == 'unsubscribe':
+                status = 'failed'
+            elif evt == 'processed':
+                # ignore pre-send state
+                status = None
+            if status and db:
+                # Prefer provider id, else update by latest row for this email
+                if msg_id:
+                    db.update_outreach_status(provider_msg_id=msg_id, status=status)
+                elif email:
+                    # Update most recent row for this recipient
+                    try:
+                        db.connect()
+                        cur = db.conn.cursor()
+                        cur.execute('SELECT id FROM outreach_logs WHERE to_email = ? ORDER BY created_at DESC LIMIT 1', (email,))
+                        row = cur.fetchone()
+                        if row:
+                            oid = row[0] if not isinstance(row, dict) else row['id']
+                            db.update_outreach_status(id=oid, status=status)
+                    except Exception:
+                        pass
+                updated += 1
+        return jsonify({'success': True, 'updated': updated})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/outreach/schedule', methods=['POST'])
+def api_outreach_schedule():
+    """Queue a simple 3-step sequence: initial (optional), +4d follow-up, +11d final.
+
+    Body: { to, subject, text, lead_id?, job_id?, include_initial?: bool }
+    Creates rows in outreach_logs with status='scheduled' and scheduled_for timestamps.
+    """
+    payload = request.get_json(silent=True) or {}
+    to = (payload.get('to') or '').strip()
+    subject = (payload.get('subject') or '').strip()
+    text = (payload.get('text') or '').strip()
+    if not to or not subject or not text:
+        return jsonify({'success': False, 'error': 'to, subject and text required'}), 400
+    include_initial = bool(payload.get('include_initial', False))
+    try:
+        if not db:
+            return jsonify({'success': False, 'error': 'db not available'}), 501
+        created = []
+        now = datetime.utcnow()
+        if include_initial:
+            created.append(db.record_outreach(
+                to_email=to, subject=subject, body=text, transport='deferred', status='scheduled',
+                lead_id=payload.get('lead_id'), job_id=payload.get('job_id'), sequence_name='mvp_three_step', sequence_step=1,
+                scheduled_for=(now.isoformat())
+            ))
+        # Step 2: +4d
+        created.append(db.record_outreach(
+            to_email=to, subject=f"Re: {subject}", body=text, transport='deferred', status='scheduled',
+            lead_id=payload.get('lead_id'), job_id=payload.get('job_id'), sequence_name='mvp_three_step', sequence_step=2,
+            scheduled_for=((now + timedelta(days=4)).isoformat())
+        ))
+        # Step 3: +11d (7 more days)
+        created.append(db.record_outreach(
+            to_email=to, subject=f"Final: {subject}", body=text, transport='deferred', status='scheduled',
+            lead_id=payload.get('lead_id'), job_id=payload.get('job_id'), sequence_name='mvp_three_step', sequence_step=3,
+            scheduled_for=((now + timedelta(days=11)).isoformat())
+        ))
+        return jsonify({'success': True, 'scheduled_ids': created, 'count': len(created)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/webhooks/mailgun', methods=['POST'])
+def api_webhook_mailgun():
+    """Minimal Mailgun events webhook handler to update outreach statuses.
+
+    Expects form-encoded or JSON with 'event' and 'recipient' and 'Message-Id' or 'message-id'.
+    """
+    try:
+        ev = request.get_json(silent=True)
+        if not ev:
+            ev = request.form.to_dict() if request.form else {}
+        event = (ev.get('event') or ev.get('event-data', {}).get('event') or '').lower()
+        recipient = ev.get('recipient') or ev.get('event-data', {}).get('recipient')
+        msg_id = ev.get('Message-Id') or ev.get('message-id') or ev.get('event-data', {}).get('message', {}).get('headers', {}).get('message-id')
+        status = None
+        if event in ('delivered',):
+            status = 'delivered'
+        elif event in ('opened','open'):
+            status = 'opened'
+        elif event in ('clicked','click'):
+            status = 'clicked'
+        elif event in ('failed','rejected','bounced','bounce'):
+            status = 'bounced'
+        if status and db:
+            if msg_id:
+                db.update_outreach_status(provider_msg_id=msg_id, status=status)
+            elif recipient:
+                try:
+                    db.connect()
+                    cur = db.conn.cursor()
+                    cur.execute('SELECT id FROM outreach_logs WHERE to_email = ? ORDER BY created_at DESC LIMIT 1', (recipient,))
+                    row = cur.fetchone()
+                    if row:
+                        oid = row[0] if not isinstance(row, dict) else row['id']
+                        db.update_outreach_status(id=oid, status=status)
+                except Exception:
+                    pass
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ----------------------
+# Vercel-friendly alias routes (thin API design)
+# ----------------------
+
+@app.route('/api/enqueue', methods=['POST'])
+def api_enqueue_alias():
+    return api_enqueue_crawl()
+
+@app.route('/api/jobs', methods=['GET'])
+def api_jobs_alias():
+    return api_read_jobs()
+
+@app.route('/api/leads', methods=['GET'])
+def api_leads_alias():
+    return api_read_leads()
+
+@app.route('/api/send', methods=['POST'])
+def api_send_alias():
+    # Prefer outreach send (caps + logging); fallback to basic send
+    try:
+        return api_outreach_send()
+    except Exception:
+        return api_send_email()
+
+@app.route('/admin')
+@admin_required
+def admin_page():
+    return send_from_directory('../templates', 'admin.html')
+
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
     """Live scraping endpoint with real job APIs and fallback scraping."""
@@ -1525,6 +2509,7 @@ def live_scrape():
     live_jobs.clear()
     
     try:
+        log_event(f"live_scrape start: '{keywords}' platforms={platforms}")
         total_leads_before = len(business_leads) if not db else 0
         
         # Try advanced scraper first if available
@@ -1791,6 +2776,7 @@ def live_scrape():
             plat = job.get('platform', 'Unknown')
             platform_counts[plat] = platform_counts.get(plat, 0) + 1
         print(f"📊 Platform breakdown: {platform_counts}")
+        log_event(f"live_scrape done: jobs={len(live_jobs)} platforms={list(platform_counts.keys())}")
         
         # Save search history to database
         if db and hasattr(db, 'save_search_history'):
@@ -1799,9 +2785,19 @@ def live_scrape():
                 if hasattr(db, 'get_business_leads'):
                     db_leads = db.get_business_leads(limit=1000)
                     total_leads_after = len(db_leads)
-                
+
                 leads_generated = max(0, total_leads_after - total_leads_before)
-                db.save_search_history(keywords, platforms, len(live_jobs), leads_generated)
+                filters = {
+                    'keywords': keywords,
+                    'location': '',
+                    'remote': bool(remote_only),
+                    'platforms': platforms,
+                }
+                results = {
+                    'total': len(live_jobs),
+                    'new': int(leads_generated),
+                }
+                db.save_search_history(filters, results)
             except Exception as e:
                 print(f"Error saving search history: {e}")
         
@@ -1820,6 +2816,92 @@ def live_scrape():
         'real_time_data': scraping_status.get('real_time_data', False)
     })
 
+@app.route('/api/admin/summary')
+@admin_required
+def admin_summary():
+    """Return admin summary: counts, platform breakdown, recent events, db stats."""
+    try:
+        # In-memory live jobs stats
+        platform_counts = {}
+        for j in live_jobs:
+            p = j.get('platform', 'Unknown')
+            platform_counts[p] = platform_counts.get(p, 0) + 1
+
+        # Recent events (last 50)
+        events = list(recent_events[-50:])
+
+        # DB stats if available
+        stats = None
+        if db and hasattr(db, 'get_stats'):
+            try:
+                stats = db.get_stats()
+            except Exception as e:
+                stats = {'error': str(e)}
+
+        # Log tail
+        log_tail = tail_log(LOG_FILE, 20)
+        failures = {k: len(v) for k, v in failure_records.items()}
+
+        return jsonify({
+            'success': True,
+            'live_jobs_count': len(live_jobs),
+            'platform_breakdown': platform_counts,
+            'scraping_status': scraping_status,
+            'recent_events': events,
+            'db_stats': stats,
+            'log_tail': log_tail,
+            'log_file': LOG_FILE,
+            'failures_recent': failures,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/clear-db', methods=['POST'])
+@admin_required
+def admin_clear_db():
+    """Clear database tables and/or recent events. Body: { what: 'jobs'|'leads'|'all', clearEvents?: bool }"""
+    if not db:
+        return jsonify({'success': False, 'error': 'Database not initialized'}), 503
+    payload = request.get_json(silent=True) or {}
+    what = (payload.get('what') or 'all').lower()
+    clear_events = bool(payload.get('clearEvents'))
+    deleted = {}
+    try:
+        db.connect()
+        cur = db.conn.cursor()
+        # Helper to run delete safely
+        def try_delete(table: str):
+            try:
+                cur.execute(f'SELECT COUNT(*) FROM {table}')
+                before = cur.fetchone()[0]
+            except Exception:
+                before = None
+            try:
+                cur.execute(f'DELETE FROM {table}')
+                db.conn.commit()
+                deleted[table] = before
+            except Exception as e:
+                deleted[table] = f'error: {e}'
+
+        if what in ('jobs', 'all'):
+            for t in ('job_contacts', 'contacts', 'job_history', 'jobs'):
+                try_delete(t)
+        if what in ('leads', 'all'):
+            try_delete('business_leads')
+        # Always allow clearing search history optionally
+        if payload.get('clearSearchHistory'):
+            try_delete('search_history')
+
+        if clear_events:
+            try:
+                recent_events.clear()
+            except Exception:
+                pass
+
+        return jsonify({'success': True, 'deleted': deleted, 'events_cleared': clear_events})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'deleted': deleted}), 500
+
 @app.route('/api/test-remoteok')
 def test_remoteok_direct():
     """Direct test of RemoteOK API."""
@@ -1827,7 +2909,7 @@ def test_remoteok_direct():
         import requests
         url = "https://remoteok.com/api"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
+        response = fetch_url(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -2320,20 +3402,82 @@ def crawl_urls_endpoint():
     """
     data = request.get_json() or {}
     urls: List[str] = data.get('urls') or []
-    max_links = int(data.get('max_links_per_listing', 25))
+    keywords: str = data.get('keywords') or ''
+    # Clamp max_links to keep runtime predictable on modest servers
+    try:
+        max_links = int(data.get('max_links_per_listing', 25))
+    except Exception:
+        max_links = 25
+    max_links = max(1, min(max_links, 50))
+
     if not isinstance(urls, list) or not urls:
         return jsonify({'success': False, 'error': 'urls must be a non-empty array'}), 400
+
+    # Sanitize and limit incoming listing URLs to http/https and dedupe
+    def _is_safe_url(u: str) -> bool:
+        try:
+            p = urlparse(u)
+            if p.scheme not in ('http', 'https'):
+                return False
+            if not p.netloc:
+                return False
+            return True
+        except Exception:
+            return False
+
+    sanitized = []
+    seen = set()
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        u = u.strip()
+        if not u or len(u) > 2048:
+            continue
+        if not _is_safe_url(u):
+            continue
+        key = compute_canonical_hash(u)
+        if key in seen:
+            continue
+        seen.add(key)
+        sanitized.append(u)
+        if len(sanitized) >= 5:  # Hard cap per request
+            break
+
+    if not sanitized:
+        return jsonify({'success': False, 'error': 'no valid http/https listing urls provided'}), 400
+    urls = sanitized
 
     headers = {'User-Agent': 'Mozilla/5.0'}
     created = 0
     updated = 0
     collected: List[Dict] = []
 
+    run_started = datetime.now().isoformat()
+    logger.info(f"Crawl start urls={len(urls)} max_links={max_links}")
+    per_url_results = []
+    total_found_created = 0
+    total_found_updated = 0
     for listing_url in urls:
         try:
-            r = requests.get(listing_url, headers=headers, timeout=15)
+            started_at = datetime.now().isoformat()
+            # Rate-limited fetch to be polite and keep within resource limits
+            r = fetch_url(listing_url, headers=headers, timeout=15)
             if r.status_code != 200:
                 print(f"Listing fetch non-200 for {listing_url}: {r.status_code}")
+                # log error
+                domain = extract_domain(listing_url) or ''
+                err = f"HTTP {r.status_code}"
+                logger.error(f"Crawl listing error domain={domain} url={listing_url} err={err}")
+                record_failure(domain, err)
+                try:
+                    if db and hasattr(db, 'log_crawl'):
+                        db.log_crawl(domain, listing_url, 'error', 0, err, started_at, datetime.now().isoformat())
+                    else:
+                        memory_crawl_logs.append({'domain': domain, 'listing_url': listing_url, 'status': 'error', 'found_count': 0, 'error_message': err, 'started_at': started_at, 'finished_at': datetime.now().isoformat()})
+                        memory_crawl_logs[:] = memory_crawl_logs[-100:]
+                except Exception:
+                    pass
+                per_url_results.append({'listing_url': listing_url, 'domain': domain, 'status': 'error', 'found': 0, 'error': err})
                 continue
             base_domain = extract_domain(listing_url) or ''
             soup = BeautifulSoup(r.text, 'html.parser')
@@ -2360,22 +3504,38 @@ def crawl_urls_endpoint():
                     seen_links.add(key)
 
             # Fetch each job page
+            created_here = 0
+            updated_here = 0
+            attempted_here = 0
             for jl in unique_links:
                 try:
-                    jr = requests.get(jl, headers=headers, timeout=15)
+                    attempted_here += 1
+                    jr = fetch_url(jl, headers=headers, timeout=15)
                     if jr.status_code != 200:
+                        record_failure(extract_domain(jl) or '', f"HTTP {jr.status_code}")
                         continue
                     job = parse_job_page(jl, jr.text)
-                    canon_hash = compute_canonical_hash(job.get('url'))
-                    # Save to DB or memory
+                    # Compute score and add crawl metadata
+                    try:
+                        intel = extract_company_intelligence(job)
+                        job['lead_score'] = intel.get('lead_score', 0)
+                    except Exception:
+                        job['lead_score'] = 0
+                    job['crawled_at'] = datetime.now().isoformat()
+                    job['source_listing'] = listing_url
+                    # Save to DB or memory (dedupe by URL, then title+company+date)
                     saved = False
                     if db:
                         try:
-                            # Reuse existing DB API
-                            exists_id = db.job_exists(canon_hash)
+                            exists_id = None
+                            if hasattr(db, 'job_exists_by_url'):
+                                exists_id = db.job_exists_by_url(job.get('url'))
+                            if not exists_id and hasattr(db, 'job_exists_by_title_company_date'):
+                                exists_id = db.job_exists_by_title_company_date(job.get('title'), job.get('company'), job.get('date_posted'))
                             if exists_id:
                                 db.update_job_last_seen(exists_id)
                                 updated += 1
+                                updated_here += 1
                             else:
                                 job_data = {
                                     'title': job.get('title','Unknown'),
@@ -2390,8 +3550,14 @@ def crawl_urls_endpoint():
                                     'date_posted': job.get('date_posted', datetime.now().strftime('%Y-%m-%d')),
                                     'keywords_used': scraping_status.get('last_search','')
                                 }
-                                db.insert_job(job_data)
+                                jid = db.insert_job(job_data)
+                                # Update extra fields
+                                try:
+                                    db.update_job_extra(jid, source_listing=listing_url, crawled_at=job['crawled_at'], lead_score=job.get('lead_score'))
+                                except Exception as e:
+                                    print(f"Update extra failed for job {jid}: {e}")
                                 created += 1
+                                created_here += 1
                             saved = True
                         except Exception as e:
                             print(f"DB save error for {jl}: {e}")
@@ -2399,12 +3565,57 @@ def crawl_urls_endpoint():
                         # Fallback: add to live_jobs (in-memory)
                         live_jobs.append(job)
                         created += 1
+                        created_here += 1
                         collected.append(job)
                 except Exception as e:
                     print(f"Job fetch error: {e}")
+                    logger.error(f"Crawl job fetch error url={jl} err={e}")
+                    record_failure(extract_domain(jl) or '', str(e))
                 time.sleep(0.25)  # polite delay per job
+            total_found_created += created_here
+            total_found_updated += updated_here
+            # Log per-listing crawl
+            try:
+                if db and hasattr(db, 'log_crawl'):
+                    db.log_crawl(base_domain, listing_url, 'ok', created_here + updated_here, None, started_at, datetime.now().isoformat())
+                else:
+                    memory_crawl_logs.append({'domain': base_domain, 'listing_url': listing_url, 'status': 'ok', 'found_count': created_here + updated_here, 'error_message': None, 'started_at': started_at, 'finished_at': datetime.now().isoformat()})
+                    memory_crawl_logs[:] = memory_crawl_logs[-100:]
+            except Exception:
+                pass
+            logger.info(f"Crawl listing done domain={base_domain} url={listing_url} attempted={attempted_here} found={created_here+updated_here}")
+            per_url_results.append({'listing_url': listing_url, 'domain': base_domain, 'status': 'ok', 'attempted': attempted_here, 'found': created_here + updated_here})
         except Exception as e:
             print(f"Listing error: {e}")
+            domain = extract_domain(listing_url) or ''
+            logger.error(f"Crawl listing exception domain={domain} url={listing_url} err={e}")
+            try:
+                if db and hasattr(db, 'log_crawl'):
+                    db.log_crawl(domain, listing_url, 'error', 0, str(e), started_at, datetime.now().isoformat())
+                else:
+                    memory_crawl_logs.append({'domain': domain, 'listing_url': listing_url, 'status': 'error', 'found_count': 0, 'error_message': str(e), 'started_at': started_at, 'finished_at': datetime.now().isoformat()})
+                    memory_crawl_logs[:] = memory_crawl_logs[-100:]
+            except Exception:
+                pass
+            record_failure(domain, str(e))
+
+    # Save last-run summary
+    try:
+        global last_crawl_summary
+        last_crawl_summary = {
+            'started_at': run_started,
+            'finished_at': datetime.now().isoformat(),
+            'urls': urls,
+            'keywords': keywords,
+            'results': per_url_results,
+            'total_created': created,
+            'total_updated': updated,
+            'total_attempted': sum((r.get('attempted') or 0) for r in per_url_results),
+            'total_found': total_found_created + total_found_updated
+        }
+    except Exception:
+        pass
+    logger.info(f"Crawl end urls={len(urls)} created={created} updated={updated} found={total_found_created+total_found_updated}")
 
     return jsonify({
         'success': True,
@@ -2417,21 +3628,60 @@ def crawl_urls_endpoint():
 def export_jobs_endpoint():
     """Export jobs as CSV, from DB when available else in-memory."""
     search = (request.args.get('search') or '').lower().strip()
+    crawled_only = request.args.get('crawled_only', '0') in ('1','true','True')
+    min_score = int(request.args.get('min_score', 0))
     limit = int(request.args.get('limit', 1000))
     rows: List[Dict] = []
     if db and hasattr(db, 'get_jobs'):
         try:
-            rows = db.get_jobs(limit=limit, search=search or None)
+            # Use raw query here to support crawled_only filter
+            if crawled_only:
+                db.connect()
+                cur = db.conn.cursor()
+                sql = 'SELECT * FROM jobs WHERE source_listing IS NOT NULL'
+                params = []
+                if search:
+                    sql += ' AND (title LIKE ? OR company LIKE ? OR description LIKE ? OR url LIKE ?)' 
+                    pattern = f'%{search}%'
+                    params.extend([pattern, pattern, pattern, pattern])
+                sql += ' ORDER BY first_seen DESC LIMIT ?'
+                params.append(limit)
+                cur.execute(sql, params)
+                rows = [dict(r) for r in cur.fetchall()]
+            else:
+                rows = db.get_jobs(limit=limit, search=search or None)
         except Exception as e:
             print(f"DB get_jobs export error: {e}")
     if not rows:
         rows = live_jobs
         if search:
             rows = [j for j in rows if search in (j.get('title','').lower()+j.get('company','').lower()+j.get('description','').lower())]
+        if crawled_only:
+            rows = [j for j in rows if j.get('source_listing')]
+    # Filter by score if requested
+    if min_score > 0:
+        nr = []
+        for r in rows:
+            sc = r.get('lead_score')
+            try:
+                sc = int(sc) if sc is not None else None
+            except Exception:
+                sc = None
+            if sc is None:
+                # compute score fallback
+                try:
+                    intel = extract_company_intelligence(r)
+                    sc = intel.get('lead_score', 0)
+                    r['lead_score'] = sc
+                except Exception:
+                    sc = 0
+            if sc >= min_score:
+                nr.append(r)
+        rows = nr
         rows = rows[:limit]
 
     output = io.StringIO()
-    headers = ['title','company','location','platform','url','date_posted','description']
+    headers = ['title','company','location','platform','url','date_posted','crawled_at','source_listing','lead_score','description']
     writer = csv.DictWriter(output, fieldnames=headers)
     writer.writeheader()
     for r in rows:
@@ -2439,6 +3689,147 @@ def export_jobs_endpoint():
     mem = io.BytesIO(output.getvalue().encode('utf-8-sig'))
     filename = f"jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     return send_file(mem, mimetype='text/csv', as_attachment=True, download_name=filename)
+
+@app.route('/api/selenium-crawl', methods=['POST'])
+def selenium_crawl_stub():
+    """Stub endpoint for Selenium-based crawl. Not available on serverless by default.
+
+    Returns 501 with guidance, unless ENABLE_SELENIUM=1 is set and environment provides Chrome.
+    """
+    if os.getenv('ENABLE_SELENIUM', '0') not in ('1', 'true', 'True'):
+        return jsonify({'success': False, 'error': 'Selenium worker not enabled in this runtime. Run locally via `python -m crawler.selenium_crawler` or deploy a worker service.', 'doc': '/CRAWLER.md'}), 501
+    try:
+        from crawler.selenium_crawler import crawl_listings, SeleniumCrawlerConfig
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Selenium not available: {e}'}), 500
+    data = request.get_json(silent=True) or {}
+    urls = data.get('urls') or []
+    keywords = data.get('keywords') or ''
+    if not urls:
+        return jsonify({'success': False, 'error': 'urls required'}), 400
+    kw = [k.strip() for k in (keywords or '').split(',') if k.strip()]
+    cfg = SeleniumCrawlerConfig(keywords=kw or None)
+    summary = crawl_listings(urls, cfg, db)
+    return jsonify({'success': True, **summary})
+@app.route('/api/crawl-last-run')
+def crawl_last_run():
+    try:
+        return jsonify({'success': True, 'summary': last_crawl_summary})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/results')
+def results_page():
+    return send_from_directory('../templates', 'results.html')
+
+@app.route('/leads')
+def leads_page():
+    return send_from_directory('../templates', 'leads.html')
+
+@app.route('/api/crawl-results')
+def crawl_results_api():
+    """Fetch crawled results with filters: search, source, has_budget."""
+    search = (request.args.get('search') or '').strip()
+    source = (request.args.get('source') or '').strip()
+    has_budget = request.args.get('has_budget', '0') in ('1','true','True')
+    min_score = int(request.args.get('min_score', 0))
+    sort = (request.args.get('sort') or '').strip()  # score_desc|score_asc|recent
+    limit = int(request.args.get('limit', 500))
+    out: List[Dict] = []
+    try:
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            sql = 'SELECT * FROM jobs WHERE source_listing IS NOT NULL'
+            params: List = []
+            if search:
+                sql += ' AND (title LIKE ? OR company LIKE ? OR description LIKE ? OR url LIKE ? OR source_listing LIKE ?)' 
+                pattern = f'%{search}%'
+                params.extend([pattern, pattern, pattern, pattern, pattern])
+            if source:
+                sql += ' AND (source_listing LIKE ? OR platform LIKE ?)' 
+                sp = f'%{source}%'
+                params.extend([sp, sp])
+            sql += ' ORDER BY COALESCE(crawled_at, first_seen) DESC LIMIT ?'
+            params.append(limit)
+            cur.execute(sql, params)
+            out = [dict(r) for r in cur.fetchall()]
+        else:
+            out = [j for j in live_jobs if j.get('source_listing')]
+            if search:
+                s = search.lower()
+                out = [j for j in out if s in (j.get('title','')+j.get('company','')+j.get('description','')+j.get('url','')+j.get('source_listing','')).lower()]
+            if source:
+                s = source.lower()
+                out = [j for j in out if s in (j.get('source_listing','').lower() + ' ' + (j.get('platform','') or '').lower())]
+            out = out[:limit]
+        # Compute has_budget and fallback score if missing
+        def compute_has_budget(j):
+            txt = (j.get('description') or '') + ' ' + (j.get('salary') or j.get('salary_range') or '')
+            t = txt.lower()
+            return any(w in t for w in ['salary', '$', 'usd', 'eur', 'compensation', 'budget', 'rate', 'per hour', 'per annum', 'k'])
+        for j in out:
+            if j.get('lead_score') is None:
+                try:
+                    intel = extract_company_intelligence(j)
+                    j['lead_score'] = intel.get('lead_score', 0)
+                except Exception:
+                    j['lead_score'] = 0
+            j['has_budget'] = compute_has_budget(j)
+        if has_budget:
+            out = [j for j in out if j.get('has_budget')]
+        if min_score > 0:
+            out = [j for j in out if (j.get('lead_score') or 0) >= min_score]
+        if sort == 'score_desc':
+            out.sort(key=lambda x: x.get('lead_score') or 0, reverse=True)
+        elif sort == 'score_asc':
+            out.sort(key=lambda x: x.get('lead_score') or 0)
+        elif sort == 'recent':
+            out.sort(key=lambda x: (x.get('crawled_at') or x.get('first_seen') or ''), reverse=True)
+        return jsonify({'success': True, 'total': len(out), 'results': out})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/clear-crawl-results', methods=['POST'])
+def clear_crawl_results():
+    try:
+        deleted = 0
+        if db and hasattr(db, 'clear_crawl_results'):
+            deleted = db.clear_crawl_results()
+        # Also clear in-memory crawled jobs
+        global live_jobs
+        live_jobs = [j for j in live_jobs if not j.get('source_listing')]
+        return jsonify({'success': True, 'deleted': deleted})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/crawl-logs')
+@admin_required
+def admin_crawl_logs():
+    limit = int(request.args.get('limit', 20))
+    try:
+        logs = []
+        if db and hasattr(db, 'get_crawl_logs'):
+            logs = db.get_crawl_logs(limit=limit)
+        else:
+            logs = memory_crawl_logs[-limit:][::-1]
+        return jsonify({'success': True, 'logs': logs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/app-logs')
+@admin_required
+def admin_app_logs():
+    try:
+        lines = tail_log(LOG_FILE, int(request.args.get('lines', 20)))
+        size = 0
+        try:
+            size = os.path.getsize(LOG_FILE)
+        except Exception:
+            pass
+        return jsonify({'success': True, 'path': LOG_FILE, 'size': size, 'lines': lines})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 def scrape_nodesk_rss(keywords: str, limit: int = 15) -> List[Dict]:
     jobs: List[Dict] = []
@@ -6480,6 +7871,422 @@ def schedule_report_job():
         JobPriority[data.get('priority', 'NORMAL').upper()]
     )
     return jsonify({'success': True, 'job_id': job_id})
+
+# ----------------------
+# Admin pages and Monitoring/Analytics APIs
+# ----------------------
+
+@app.route('/admin')
+def admin_page():
+    return send_from_directory('../templates', 'admin.html')
+
+@app.route('/analytics')
+def analytics_page():
+    return send_from_directory('../templates', 'analytics.html')
+
+@app.route('/api/admin/summary')
+def api_admin_summary():
+    try:
+        platform_breakdown: Dict[str, int] = defaultdict(int)
+        for j in live_jobs:
+            p = (j.get('platform') or 'unknown')
+            platform_breakdown[p] += 1
+        db_stats: Dict = {}
+        if db:
+            try:
+                db_stats = db.get_stats()
+            except Exception as e:
+                db_stats = {'error': str(e)}
+        return jsonify({
+            'success': True,
+            'live_jobs_count': len(live_jobs),
+            'platform_breakdown': platform_breakdown,
+            'db_stats': db_stats,
+            'recent_events': recent_events[-100:]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/crawl-logs')
+def api_admin_crawl_logs():
+    limit = int(request.args.get('limit', 20))
+    try:
+        logs: List[Dict] = []
+        if db:
+            try:
+                logs = db.get_crawl_logs(limit=limit)
+            except Exception:
+                logs = []
+        if not logs:
+            logs = memory_crawl_logs[-limit:]
+        return jsonify({'success': True, 'logs': logs})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/clear-db', methods=['POST'])
+def api_admin_clear_db():
+    try:
+        body = request.get_json(silent=True) or {}
+        what = (body.get('what') or 'all').lower()
+        clear_events = bool(body.get('clearEvents') or body.get('clear_events'))
+        clear_search = bool(body.get('clearSearchHistory') or body.get('clear_search_history'))
+        deleted = {'jobs': 0, 'leads': 0}
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            if what in ('all', 'jobs'):
+                try:
+                    cur.execute("DELETE FROM job_history")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("DELETE FROM job_contacts")
+                except Exception:
+                    pass
+                try:
+                    cur.execute("DELETE FROM contacts")
+                except Exception:
+                    pass
+                cur.execute("DELETE FROM jobs")
+                deleted['jobs'] = cur.rowcount or 0
+            if what in ('all', 'leads'):
+                try:
+                    cur.execute("DELETE FROM business_leads")
+                    deleted['leads'] = cur.rowcount or 0
+                except Exception:
+                    pass
+            if clear_search or what == 'all':
+                try:
+                    cur.execute("DELETE FROM search_history")
+                except Exception:
+                    pass
+            db.conn.commit()
+        if clear_events or what == 'all':
+            try:
+                recent_events.clear()
+            except Exception:
+                pass
+        return jsonify({'success': True, 'deleted': deleted})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/stats')
+def api_stats():
+    try:
+        out = {'total_jobs': 0, 'remote_jobs': 0, 'applied_jobs': 0, 'new_jobs': 0}
+        if db:
+            s = db.get_stats()
+            out['total_jobs'] = s.get('total_jobs', 0)
+            out['remote_jobs'] = s.get('remote_jobs', 0)
+            out['new_jobs'] = s.get('new_last_24h', 0)
+            db.connect()
+            cur = db.conn.cursor()
+            try:
+                cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'applied'")
+                row = cur.fetchone()
+                out['applied_jobs'] = (row[0] if row else 0)
+            except Exception:
+                pass
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/analytics/trends')
+def api_analytics_trends():
+    days = int(request.args.get('days', 30))
+    try:
+        data: List = []
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            end = datetime.utcnow().date()
+            start = end - timedelta(days=days-1)
+            counts = { (start + timedelta(days=i)).isoformat(): 0 for i in range(days) }
+            cur.execute("SELECT date(first_seen) as d, COUNT(*) FROM jobs WHERE date(first_seen) >= date(?) GROUP BY date(first_seen)", (start.isoformat(),))
+            for row in cur.fetchall():
+                d = row[0]
+                c = row[1]
+                if d in counts:
+                    counts[d] = c
+            data = [[d, counts[d]] for d in sorted(counts.keys())]
+        return jsonify({'data': {'daily_data': data}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/analytics/salary')
+def api_analytics_salary():
+    try:
+        ranges = { '$0-50k': 0, '$50-100k': 0, '$100-150k': 0, '$150-200k': 0, '$200k+': 0 }
+        total_with_salary = 0
+        if db:
+            import re as _re
+            db.connect()
+            cur = db.conn.cursor()
+            cur.execute("SELECT COALESCE(salary, budget) FROM jobs")
+            rows = cur.fetchall()
+            for r in rows:
+                s = r[0]
+                if not s:
+                    continue
+                text = str(s)
+                m = _re.search(r"(\$?)(\d{2,3})(?:[,\.]?\d{3})?", text)
+                if not m:
+                    continue
+                try:
+                    val = int(m.group(2))
+                except Exception:
+                    continue
+                total_with_salary += 1
+                if val < 50:
+                    ranges['$0-50k'] += 1
+                elif val < 100:
+                    ranges['$50-100k'] += 1
+                elif val < 150:
+                    ranges['$100-150k'] += 1
+                elif val < 200:
+                    ranges['$150-200k'] += 1
+                else:
+                    ranges['$200k+'] += 1
+        if total_with_salary == 0:
+            return jsonify({'data': {'insufficient_data': True}})
+        return jsonify({'data': {'ranges': ranges}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+_SKILL_WORDS = [
+    'python','java','javascript','typescript','react','node','next.js','vue','angular','docker','kubernetes','aws','gcp','azure','graphql','rest','postgres','mysql','mongodb','redis','kafka','spark','hadoop','pandas','tensorflow','pytorch','nlp','ml','ai','devops','ci/cd','linux'
+]
+
+@app.route('/api/analytics/skills')
+def api_analytics_skills():
+    top_n = int(request.args.get('top_n', 20))
+    try:
+        counts: Dict[str, int] = defaultdict(int)
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            cur.execute("SELECT LOWER(COALESCE(title,'') || ' ' || COALESCE(description,'')) FROM jobs")
+            for row in cur.fetchall():
+                blob = row[0] or ''
+                for w in _SKILL_WORDS:
+                    if w in blob:
+                        counts[w] += 1
+        data = sorted(({ 'skill': k, 'count': v } for k,v in counts.items()), key=lambda x: x['count'], reverse=True)[:top_n]
+        return jsonify({'data': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/analytics/platforms')
+def api_analytics_platforms():
+    try:
+        data: List[Dict] = []
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            cur.execute("SELECT platform, COUNT(*) as c FROM jobs GROUP BY platform ORDER BY c DESC")
+            rows = cur.fetchall()
+            for r in rows:
+                data.append({'platform': r[0], 'total_jobs': r[1]})
+        return jsonify({'data': data})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/analytics/funnel')
+def api_analytics_funnel():
+    try:
+        funnel = {'new': 0, 'interested': 0, 'applied': 0, 'interview': 0, 'offer': 0}
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            cur.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")
+            for r in cur.fetchall():
+                k = (r[0] or '').lower()
+                v = r[1] or 0
+                if k in funnel:
+                    funnel[k] = v
+        return jsonify({'data': {'funnel': funnel}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/analytics/locations')
+def api_analytics_locations():
+    top_n = int(request.args.get('top_n', 10))
+    try:
+        data: List[Dict] = []
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            cur.execute("SELECT COALESCE(location,'Unknown') as loc, COUNT(*) as c FROM jobs GROUP BY loc ORDER BY c DESC")
+            rows = cur.fetchall()
+            for r in rows:
+                data.append({'location': r[0], 'count': r[1]})
+        return jsonify({'data': data[:top_n]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/analytics/report')
+def api_analytics_report():
+    try:
+        stats = api_stats().get_json()
+        trends = api_analytics_trends().get_json().get('data', {})
+        salary = api_analytics_salary().get_json().get('data', {})
+        skills = api_analytics_skills().get_json().get('data', [])
+        platforms = api_analytics_platforms().get_json().get('data', [])
+        funnel = api_analytics_funnel().get_json().get('data', {})
+        locations = api_analytics_locations().get_json().get('data', [])
+        return jsonify({'data': {
+            'stats': stats,
+            'trends': trends,
+            'salary': salary,
+            'skills': skills,
+            'platforms': platforms,
+            'funnel': funnel,
+            'locations': locations
+        }})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ----------------------
+# Outreach: send email with unsubscribe and DNC enforcement
+# ----------------------
+
+def _append_unsubscribe(text: str) -> str:
+    footer = """
+
+--
+If you do not wish to receive further emails, just reply with 'unsubscribe' and we will not contact you again.
+""".strip('\n')
+    # Include contact email if available
+    if CONTACT_EMAIL:
+        footer += f"\nContact: {CONTACT_EMAIL}"
+    return (text or '').rstrip() + "\n\n" + footer
+
+def _smtp_send(to_email: str, subject: str, body: str) -> bool:
+    if not (SMTP_HOST and SMTP_FROM):
+        return False
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = SMTP_FROM
+    msg['To'] = to_email
+    msg.set_content(body)
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+        try:
+            s.starttls()
+        except Exception:
+            pass
+        if SMTP_USER and SMTP_PASS:
+            s.login(SMTP_USER, SMTP_PASS)
+        s.send_message(msg)
+    return True
+
+@app.route('/api/outreach/send', methods=['POST'])
+def api_outreach_send():
+    try:
+        payload = request.get_json(silent=True) or {}
+        to_email = (payload.get('to') or '').strip()
+        subject = (payload.get('subject') or '').strip()
+        text = payload.get('text') or ''
+        if not to_email or not subject or not text:
+            return jsonify({'success': False, 'error': 'to, subject, text required'}), 400
+        # DNC enforcement
+        if db and db.is_do_not_contact(to_email):
+            return jsonify({'success': False, 'error': 'do_not_contact'}), 403
+        # Append unsubscribe footer
+        body = _append_unsubscribe(text)
+        sent = False
+        error = None
+        try:
+            sent = _smtp_send(to_email, subject, body)
+        except Exception as e:
+            error = str(e)
+        # Log outreach
+        if db:
+            try:
+                db.record_outreach(to_email=to_email, subject=subject, body=body, transport='smtp' if sent else 'none', status='sent' if sent else 'failed', error=error)
+            except Exception:
+                pass
+        if sent:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': error or 'send failed'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/leads/opt-out', methods=['POST'])
+def api_leads_opt_out():
+    try:
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get('email') or '').strip() or None
+        domain = (payload.get('domain') or '').strip() or None
+        lead_id = payload.get('lead_id')
+        if not (email or domain or lead_id):
+            return jsonify({'success': False, 'error': 'Provide email, domain or lead_id'}), 400
+        if db:
+            db.mark_do_not_contact(email=email, domain=domain, lead_id=lead_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ----------------------
+# Additional monitoring metrics
+# ----------------------
+
+@app.route('/api/metrics/outreach')
+def api_metrics_outreach():
+    """Email outreach metrics: sent, delivered, opened, replied, bounced in a window."""
+    days = int(request.args.get('days', 30))
+    try:
+        window_clause = "date(COALESCE(sent_at, created_at)) >= date('now', ? )"
+        params = (f'-{days} days',)
+        out = {'sent': 0, 'delivered': 0, 'opened': 0, 'replied': 0, 'bounced': 0}
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM outreach_logs WHERE {window_clause}", params)
+                out['sent'] = cur.fetchone()[0] or 0
+                cur.execute(f"SELECT COUNT(*) FROM outreach_logs WHERE {window_clause} AND status = 'delivered'", params)
+                out['delivered'] = cur.fetchone()[0] or 0
+                cur.execute(f"SELECT COUNT(*) FROM outreach_logs WHERE {window_clause} AND status = 'opened'", params)
+                out['opened'] = cur.fetchone()[0] or 0
+                cur.execute(f"SELECT COUNT(*) FROM outreach_logs WHERE {window_clause} AND status = 'replied'", params)
+                out['replied'] = cur.fetchone()[0] or 0
+                cur.execute(f"SELECT COUNT(*) FROM outreach_logs WHERE {window_clause} AND status = 'bounced'", params)
+                out['bounced'] = cur.fetchone()[0] or 0
+            except Exception:
+                pass
+        # Derived rates
+        total = max(out['sent'], 1)
+        out['bounce_rate'] = out['bounced'] / total
+        out['reply_rate'] = out['replied'] / total
+        out['open_rate'] = out['opened'] / total
+        return jsonify({'success': True, 'window_days': days, 'metrics': out})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/metrics/crawl')
+def api_metrics_crawl():
+    """Crawl/extraction quality: jobs created, with title+description, per-day counts."""
+    days = int(request.args.get('days', 7))
+    try:
+        out = {'jobs_total': 0, 'with_title_desc': 0, 'success_rate': 0.0}
+        if db:
+            db.connect()
+            cur = db.conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE date(COALESCE(crawled_at, first_seen)) >= date('now', ?)", (f'-{days} days',))
+            row = cur.fetchone(); out['jobs_total'] = (row[0] if row else 0) or 0
+            cur.execute("""
+                SELECT COUNT(*) FROM jobs
+                WHERE date(COALESCE(crawled_at, first_seen)) >= date('now', ?)
+                  AND COALESCE(TRIM(title),'') <> ''
+                  AND COALESCE(TRIM(description),'') <> ''
+            """, (f'-{days} days',))
+            row = cur.fetchone(); out['with_title_desc'] = (row[0] if row else 0) or 0
+        total = max(out['jobs_total'], 1)
+        out['success_rate'] = out['with_title_desc'] / total
+        return jsonify({'success': True, 'window_days': days, 'metrics': out})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # WSGI entry point for Vercel
 if __name__ == '__main__':

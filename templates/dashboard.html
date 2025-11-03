@@ -212,6 +212,14 @@
 </head>
 <body>
     <div class="container">
+        <div id="policyBanner" style="background:#fffbea;border:1px solid #f6e05e;color:#744210;padding:0.75rem 1rem;border-radius:10px;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">
+            <div>
+                <strong>Usage reminder:</strong>
+                <span id="policyText">Please respect robots.txt and site Terms of Service. Do not bypass login or CAPTCHA. Avoid collecting personal user data at scale.</span>
+                <span id="policyContact"></span>
+            </div>
+            <button onclick="document.getElementById('policyBanner').style.display='none'" style="background:#f6e05e;border:none;color:#744210;font-weight:700;border-radius:6px;padding:0.3rem 0.6rem;cursor:pointer;">Dismiss</button>
+        </div>
         <div class="header">
             <h1>🚀 Job Scraper</h1>
             <p>Find real job postings from top platforms - RemoteOK, Adzuna, and more</p>
@@ -245,14 +253,25 @@
                 <textarea id="crawlUrls" placeholder="Paste one or more listing page URLs (one per line)" style="flex:1;min-height:90px;padding:0.8rem;border:2px solid #e0e0e0;border-radius:12px;font-family:monospace;"></textarea>
                 <div style="display:flex;flex-direction:column;gap:0.5rem;min-width:220px;">
                     <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
+                        <span style="font-size:0.95rem;color:#4a5568;">Keywords (comma-separated)</span>
+                        <input type="text" id="crawlKeywords" placeholder="python, react" style="width:150px;border:none;outline:none;" />
+                    </label>
+                    <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
                         <span style="font-size:0.95rem;color:#4a5568;">Max links per listing</span>
                         <input type="number" id="maxLinks" value="25" min="1" max="200" style="width:70px;border:none;outline:none;" />
                     </label>
-                    <button onclick="crawlUrls()" class="btn-search" id="crawlBtn">🕷️ Crawl URLs</button>
-                    <button onclick="exportJobs()" class="btn-sample" id="exportJobsBtn">⬇️ Export Jobs CSV</button>
+                    <button onclick="crawlUrls()" class="btn-search" id="crawlBtn">🕷️ Crawl now</button>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                        <button onclick="exportJobs()" class="btn-sample" id="exportJobsBtn">⬇️ Export Jobs CSV</button>
+                        <a href="/results" class="btn-sample" style="text-decoration:none;background:#f59e0b;">📊 View Results</a>
+                    </div>
                 </div>
             </div>
             <div id="crawlStatus" class="status hidden" style="margin-top:0.75rem;"></div>
+            <div id="lastRun" class="status hidden" style="margin-top:0.5rem;background:#fff;">
+                <div style="color:#4a5568;">Last run: <span id="lastRunTime">—</span></div>
+                <div style="color:#4a5568;">Found: <span id="lastRunCounts">—</span></div>
+            </div>
         </div>
         
         <div class="stats">
@@ -443,6 +462,7 @@
 
         async function crawlUrls() {
             const textarea = document.getElementById('crawlUrls');
+            const keywords = document.getElementById('crawlKeywords').value || '';
             const maxLinks = parseInt(document.getElementById('maxLinks').value || '25', 10);
             const status = document.getElementById('crawlStatus');
             const btn = document.getElementById('crawlBtn');
@@ -455,29 +475,29 @@
             }
             btn.disabled = true; btn.textContent = '🕷️ Crawling...';
             status.className = 'status';
-            status.textContent = `Crawling ${urls.length} listing URL(s) ...`;
+            status.textContent = `Submitting ${urls.length} listing URL(s) to worker ...`;
             status.classList.remove('hidden');
             try {
-                const res = await fetch('/api/crawl-urls', {
+                const res = await fetch('/api/enqueue-crawl', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ urls, max_links_per_listing: maxLinks })
+                    body: JSON.stringify({ urls, keywords, max_links_per_listing: maxLinks })
                 });
                 const data = await res.json();
                 if (data && data.success) {
                     status.className = 'status success';
-                    status.textContent = `✅ Created ${data.created}, updated ${data.updated}.`;
-                    // Refresh jobs panel
-                    await loadJobs();
+                    status.textContent = `✅ Accepted by worker (status ${data.status||202}). Results will appear shortly in Results.`;
+                    // Optionally poll last run summary (if backend crawl is proxied by worker)
+                    setTimeout(refreshLastRun, 2000);
                 } else {
                     status.className = 'status error';
-                    status.textContent = `❌ Crawl failed: ${data && data.error ? data.error : 'Unknown error'}`;
+                    status.textContent = `❌ Enqueue failed: ${data && data.error ? data.error : 'Unknown error'}`;
                 }
             } catch (e) {
                 status.className = 'status error';
-                status.textContent = '❌ Network or server error during crawl.';
+                status.textContent = '❌ Network or server error during enqueue.';
             } finally {
-                btn.disabled = false; btn.textContent = '🕷️ Crawl URLs';
+                btn.disabled = false; btn.textContent = '🕷️ Crawl now';
             }
         }
 
@@ -792,7 +812,34 @@
         // Load jobs on page load if any exist
         window.addEventListener('load', () => {
             loadJobs();
+            refreshLastRun();
+            // Fetch policy info and show contact email + UA
+            fetch('/api/policy').then(r=>r.json()).then(d=>{
+                if (d && d.success) {
+                    const txt = document.getElementById('policyText');
+                    if (d.message) txt.textContent = d.message;
+                    if (d.contact_email) {
+                        const pc = document.getElementById('policyContact');
+                        pc.innerHTML = ` — Contact: <a href="mailto:${d.contact_email}">${d.contact_email}</a>`;
+                    }
+                }
+            }).catch(()=>{});
         });
+
+        async function refreshLastRun() {
+            try {
+                const r = await fetch('/api/crawl-last-run');
+                const d = await r.json();
+                if (d && d.success && d.summary && d.summary.started_at) {
+                    const lr = document.getElementById('lastRun');
+                    document.getElementById('lastRunTime').textContent = d.summary.finished_at || d.summary.started_at;
+                    const created = d.summary.total_created || 0;
+                    const updated = d.summary.total_updated || 0;
+                    document.getElementById('lastRunCounts').textContent = `${created} created, ${updated} updated`;
+                    lr.classList.remove('hidden');
+                }
+            } catch {}
+        }
         
         // Allow Enter key to search
         document.getElementById('searchInput').addEventListener('keypress', (e) => {

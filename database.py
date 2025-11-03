@@ -16,7 +16,9 @@ class JobDatabase:
             db_path: Path to SQLite database file
         """
         self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        # Ensure parent directory exists; handle bare filenames gracefully
+        dir_name = os.path.dirname(db_path) or '.'
+        os.makedirs(dir_name, exist_ok=True)
         self.conn = None
         self.create_tables()
         
@@ -47,6 +49,8 @@ class JobDatabase:
                 company TEXT,
                 location TEXT,
                 salary TEXT,
+                budget TEXT,
+                date_posted TEXT,
                 description TEXT,
                 url TEXT,
                 platform TEXT NOT NULL,
@@ -109,6 +113,48 @@ class JobDatabase:
         
         self.conn.commit()
 
+        # Outreach templates table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS templates (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                subject TEXT,
+                body TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # Outreach logs table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS outreach_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id INTEGER,
+                job_id INTEGER,
+                to_email TEXT NOT NULL,
+                to_domain TEXT,
+                subject TEXT,
+                body TEXT,
+                transport TEXT, -- sendgrid | smtp | mailgun
+                status TEXT,    -- queued | scheduled | sent | delivered | bounced | opened | clicked | replied | failed
+                provider_msg_id TEXT,
+                sequence_name TEXT,
+                sequence_step INTEGER,
+                template_id TEXT,
+                scheduled_for TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_at TIMESTAMP,
+                delivered_at TIMESTAMP,
+                opened_at TIMESTAMP,
+                replied_at TIMESTAMP,
+                error TEXT,
+                metadata TEXT
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach_logs(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_outreach_sent_at ON outreach_logs(sent_at)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_outreach_sched ON outreach_logs(scheduled_for)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_outreach_domain ON outreach_logs(to_domain)')
+        self.conn.commit()
+
         # Ensure contact/lead columns exist on jobs table (migration-safe)
         cursor.execute("PRAGMA table_info(jobs)")
         cols = {row[1] for row in cursor.fetchall()}
@@ -123,6 +169,17 @@ class JobDatabase:
             alter_needed.append("ADD COLUMN company_domain TEXT")
         if 'poster_name' not in cols:
             alter_needed.append("ADD COLUMN poster_name TEXT")
+        if 'date_posted' not in cols:
+            alter_needed.append("ADD COLUMN date_posted TEXT")
+        if 'budget' not in cols:
+            alter_needed.append("ADD COLUMN budget TEXT")
+        # Crawl-related columns
+        if 'source_listing' not in cols:
+            alter_needed.append("ADD COLUMN source_listing TEXT")
+        if 'crawled_at' not in cols:
+            alter_needed.append("ADD COLUMN crawled_at TIMESTAMP")
+        if 'lead_score' not in cols:
+            alter_needed.append("ADD COLUMN lead_score INTEGER")
         for stmt in alter_needed:
             cursor.execute(f"ALTER TABLE jobs {stmt}")
         if alter_needed:
@@ -135,6 +192,7 @@ class JobDatabase:
                 email TEXT UNIQUE NOT NULL,
                 domain TEXT,
                 mx_ok BOOLEAN,
+                do_not_contact BOOLEAN DEFAULT 0,
                 first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -156,6 +214,22 @@ class JobDatabase:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_contacts_job ON job_contacts(job_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_contacts_conf ON job_contacts(confidence)')
+        self.conn.commit()
+
+        # Crawl logs table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS crawl_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT,
+                listing_url TEXT,
+                status TEXT,
+                found_count INTEGER,
+                error_message TEXT,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_crawl_logs_started ON crawl_logs(started_at)')
         self.conn.commit()
         
     def generate_job_hash(self, job: Dict) -> str:
@@ -187,6 +261,44 @@ class JobDatabase:
         result = cursor.fetchone()
         
         return result['id'] if result else None
+
+    def job_exists_by_url(self, url: str) -> Optional[int]:
+        """Check if a job exists by canonical URL.
+
+        Args:
+            url: Canonical URL to check
+        Returns:
+            Job ID if exists, None otherwise
+        """
+        if not url:
+            return None
+        self.connect()
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id FROM jobs WHERE url = ?', (url,))
+        row = cursor.fetchone()
+        return row['id'] if row else None
+
+    def job_exists_by_title_company_date(self, title: str, company: str, date_posted: Optional[str]) -> Optional[int]:
+        """Check for likely duplicates by title+company+date_posted.
+
+        Returns Job ID if a match is found, else None.
+        """
+        self.connect()
+        cursor = self.conn.cursor()
+        if date_posted:
+            cursor.execute('''
+                SELECT id FROM jobs
+                WHERE LOWER(title)=LOWER(?) AND LOWER(company)=LOWER(?) AND date_posted = ?
+                ORDER BY first_seen DESC LIMIT 1
+            ''', (title or '', company or '', date_posted))
+        else:
+            cursor.execute('''
+                SELECT id FROM jobs
+                WHERE LOWER(title)=LOWER(?) AND LOWER(company)=LOWER(?)
+                ORDER BY first_seen DESC LIMIT 1
+            ''', (title or '', company or ''))
+        row = cursor.fetchone()
+        return row['id'] if row else None
         
     def insert_job(self, job: Dict) -> int:
         """Insert new job into database.
@@ -202,17 +314,24 @@ class JobDatabase:
         
         job_hash = self.generate_job_hash(job)
         
+        # Normalize budget/salary and date_posted
+        salary = job.get('salary', '') or job.get('salary_range', '') or job.get('budget', '')
+        budget = job.get('budget', '') or job.get('salary', '') or job.get('salary_range', '')
+        date_posted = job.get('date_posted', '') or job.get('posted_at', '')
+
         cursor.execute('''
             INSERT INTO jobs (
-                job_hash, title, company, location, salary, description,
+                job_hash, title, company, location, salary, budget, date_posted, description,
                 url, platform, remote, job_type, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
         ''', (
             job_hash,
             job.get('title', ''),
             job.get('company', ''),
             job.get('location', ''),
-            job.get('salary', ''),
+            salary,
+            budget,
+            date_posted,
             job.get('description', ''),
             job.get('url', ''),
             job.get('platform', ''),
@@ -237,6 +356,27 @@ class JobDatabase:
             WHERE id = ?
         ''', (job_id,))
         
+        self.conn.commit()
+
+    def update_job_extra(self, job_id: int, source_listing: Optional[str] = None,
+                         crawled_at: Optional[str] = None, lead_score: Optional[int] = None):
+        """Update extra fields for a job row.
+
+        Args:
+            job_id: Job ID to update
+            source_listing: Listing page URL this job was discovered from
+            crawled_at: ISO timestamp of crawl
+            lead_score: Optional computed score
+        """
+        self.connect()
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE jobs
+            SET source_listing = COALESCE(?, source_listing),
+                crawled_at = COALESCE(?, crawled_at),
+                lead_score = COALESCE(?, lead_score)
+            WHERE id = ?
+        ''', (source_listing, crawled_at, lead_score, job_id))
         self.conn.commit()
         
     def save_jobs(self, jobs: List[Dict]) -> Dict[str, int]:
@@ -359,6 +499,53 @@ class JobDatabase:
                     last_seen=CURRENT_TIMESTAMP
             ''', (job_id, cid, meta.get('source'), meta.get('type'), conf))
         self.conn.commit()
+
+    def ensure_contacts_columns(self):
+        """Add missing contacts columns (like do_not_contact) if not present."""
+        self.connect()
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(contacts)")
+        cols = {row[1] for row in cur.fetchall()}
+        if 'do_not_contact' not in cols:
+            try:
+                cur.execute("ALTER TABLE contacts ADD COLUMN do_not_contact BOOLEAN DEFAULT 0")
+                self.conn.commit()
+            except Exception:
+                pass
+
+    def mark_do_not_contact(self, email: Optional[str] = None, domain: Optional[str] = None, lead_id: Optional[int] = None):
+        """Mark a contact or domain as do-not-contact. Also updates business_leads status when possible."""
+        self.ensure_contacts_columns()
+        self.connect()
+        cur = self.conn.cursor()
+        if email:
+            dom = (email.split('@')[-1]).lower() if '@' in email else None
+            cur.execute('INSERT OR IGNORE INTO contacts(email, domain, do_not_contact) VALUES(?,?,1)', (email, dom,))
+            cur.execute('UPDATE contacts SET do_not_contact = 1, last_seen = CURRENT_TIMESTAMP WHERE email = ?', (email,))
+        if domain:
+            cur.execute('UPDATE contacts SET do_not_contact = 1, last_seen = CURRENT_TIMESTAMP WHERE LOWER(domain)=LOWER(?)', (domain,))
+        if lead_id:
+            try:
+                cur.execute("UPDATE business_leads SET contact_status = 'do_not_contact' WHERE id = ?", (lead_id,))
+            except Exception:
+                pass
+        self.conn.commit()
+
+    def is_do_not_contact(self, email: Optional[str] = None) -> bool:
+        self.ensure_contacts_columns()
+        if not email:
+            return False
+        self.connect()
+        cur = self.conn.cursor()
+        cur.execute('SELECT do_not_contact FROM contacts WHERE email = ?', (email,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        val = row[0] if not isinstance(row, dict) else row.get('do_not_contact')
+        try:
+            return bool(val)
+        except Exception:
+            return False
 
     def query_contacts(self, min_confidence: float = 0.0, platform: Optional[str] = None,
                        keywords: Optional[str] = None, status: Optional[str] = None,
@@ -796,3 +983,152 @@ class JobDatabase:
         except Exception as e:
             print(f"Error getting enhanced stats: {e}")
             return self.get_statistics()
+
+        # ----------------------
+        # Outreach helpers
+        # ----------------------
+        def record_outreach(self, *, to_email: str, subject: str, body: str, transport: str,
+                            status: str = 'queued', lead_id: Optional[int] = None, job_id: Optional[int] = None,
+                            sequence_name: Optional[str] = None, sequence_step: Optional[int] = None,
+                            template_id: Optional[str] = None, scheduled_for: Optional[str] = None,
+                            provider_msg_id: Optional[str] = None, error: Optional[str] = None,
+                            metadata: Optional[Dict] = None) -> int:
+            """Insert an outreach log row. Returns inserted id."""
+            self.connect()
+            cur = self.conn.cursor()
+            to_domain = (to_email.split('@')[-1]).lower() if to_email and '@' in to_email else None
+            cur.execute('''
+                INSERT INTO outreach_logs(lead_id, job_id, to_email, to_domain, subject, body, transport, status,
+                                          provider_msg_id, sequence_name, sequence_step, template_id, scheduled_for,
+                                          error, metadata)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                lead_id, job_id, to_email, to_domain, subject, body, transport, status,
+                provider_msg_id, sequence_name, sequence_step, template_id, scheduled_for,
+                error, json.dumps(metadata or {})
+            ))
+            self.conn.commit()
+            return cur.lastrowid
+
+        def update_outreach_status(self, *, id: Optional[int] = None, provider_msg_id: Optional[str] = None,
+                                   status: str, timestamp_field: Optional[str] = None,
+                                   error: Optional[str] = None):
+            """Update an outreach row status by id or provider_msg_id. Optionally set a timestamp field."""
+            if not id and not provider_msg_id:
+                return
+            self.connect()
+            cur = self.conn.cursor()
+            ts_fields = {'sent': 'sent_at', 'delivered': 'delivered_at', 'opened': 'opened_at', 'replied': 'replied_at'}
+            ts_col = timestamp_field or ts_fields.get(status)
+            if id:
+                if ts_col:
+                    cur.execute(f'''UPDATE outreach_logs SET status = ?, {ts_col} = CURRENT_TIMESTAMP, error = COALESCE(?, error) WHERE id = ?''', (status, error, id))
+                else:
+                    cur.execute('UPDATE outreach_logs SET status = ?, error = COALESCE(?, error) WHERE id = ?', (status, error, id))
+            else:
+                if ts_col:
+                    cur.execute(f'''UPDATE outreach_logs SET status = ?, {ts_col} = CURRENT_TIMESTAMP, error = COALESCE(?, error) WHERE provider_msg_id = ?''', (status, error, provider_msg_id))
+                else:
+                    cur.execute('UPDATE outreach_logs SET status = ?, error = COALESCE(?, error) WHERE provider_msg_id = ?', (status, error, provider_msg_id))
+            self.conn.commit()
+
+        def count_sent_today(self) -> int:
+            """Return count of emails marked sent today (UTC)."""
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*) FROM outreach_logs
+                WHERE date(COALESCE(sent_at, created_at)) = date('now')
+                  AND status IN ('sent','delivered','opened','clicked','replied','bounced')
+            """)
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+        def count_sent_today_by_domain(self, domain: str) -> int:
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*) FROM outreach_logs
+                WHERE date(COALESCE(sent_at, created_at)) = date('now')
+                  AND to_domain = ?
+                  AND status IN ('sent','delivered','opened','clicked','replied','bounced')
+            """, (domain.lower(),))
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+        def get_scheduled_outreach_due(self, limit: int = 20) -> List[Dict]:
+            """Return scheduled outreach rows due now or earlier."""
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute('''
+                SELECT * FROM outreach_logs
+                WHERE status = 'scheduled' AND scheduled_for IS NOT NULL
+                  AND datetime(scheduled_for) <= datetime('now')
+                ORDER BY datetime(scheduled_for) ASC
+                LIMIT ?
+            ''', (limit,))
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+
+        def save_template(self, *, id: str, name: str, subject: str, body: str):
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute('''
+                INSERT INTO templates(id, name, subject, body)
+                VALUES(?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  subject = excluded.subject,
+                  body = excluded.body
+            ''', (id, name, subject, body))
+            self.conn.commit()
+
+        def list_templates(self) -> List[Dict]:
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute('SELECT id, name, subject, body, created_at FROM templates ORDER BY created_at DESC')
+            return [dict(r) for r in cur.fetchall()]
+
+    # Crawl logs APIs
+    def log_crawl(self, domain: str, listing_url: str, status: str,
+                  found_count: int = 0, error_message: Optional[str] = None,
+                  started_at: Optional[str] = None, finished_at: Optional[str] = None):
+        """Insert a crawl log entry."""
+        try:
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute('''
+                INSERT INTO crawl_logs(domain, listing_url, status, found_count, error_message, started_at, finished_at)
+                VALUES(?,?,?,?,?,?,?)
+            ''', (domain, listing_url, status, found_count, error_message, started_at, finished_at))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error logging crawl: {e}")
+
+    def get_crawl_logs(self, limit: int = 20) -> List[Dict]:
+        """Return recent crawl logs."""
+        try:
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute('''
+                SELECT * FROM crawl_logs ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?
+            ''', (limit,))
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"Error retrieving crawl logs: {e}")
+            return []
+
+    def clear_crawl_results(self) -> int:
+        """Delete jobs that were created by crawler (i.e., have source_listing). Returns deleted count."""
+        try:
+            self.connect()
+            cur = self.conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE source_listing IS NOT NULL")
+            before = cur.fetchone()[0]
+            cur.execute("DELETE FROM jobs WHERE source_listing IS NOT NULL")
+            self.conn.commit()
+            return before
+        except Exception as e:
+            print(f"Error clearing crawl results: {e}")
+            return 0

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crawl Results</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 16px 20px; background: #111827; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    input, select { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; }
+    button { background: #2563eb; color: white; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #374151; }
+    button.warn { background: #f59e0b; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #1f2937; text-align: left; padding: 8px; font-size: 14px; }
+    th { color: #93c5fd; }
+    .pill { background: #0b1220; border: 1px solid #334155; padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+    .muted { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div style="max-width:1200px;margin:1rem auto;padding:0 1rem;">
+    <div id="policyBanner" style="background:#fffbea;border:1px solid #f6e05e;color:#744210;padding:0.6rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">
+        <div>
+            <strong>Usage reminder:</strong>
+            <span id="policyText">Please respect robots.txt and site Terms of Service. Do not bypass login or CAPTCHA. Avoid collecting personal user data at scale.</span>
+            <span id="policyContact"></span>
+        </div>
+        <button onclick="document.getElementById('policyBanner').style.display='none'" style="background:#f6e05e;border:none;color:#744210;font-weight:700;border-radius:6px;padding:0.3rem 0.6rem;cursor:pointer;">Dismiss</button>
+    </div>
+  </div>
+  <header>
+    <div>
+      <strong>Crawl Results</strong>
+      <span class="pill" id="count-pill">0</span>
+    </div>
+    <div>
+      <a href="/dashboard">Back to Dashboard</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="controls">
+      <input id="search" placeholder="Search..." />
+      <input id="source" placeholder="Filter by source (domain)" />
+      <label><input id="hasBudget" type="checkbox" /> has-budget</label>
+      <label>min score <input id="minScore" type="number" min="0" max="100" value="0" style="width:80px;" /></label>
+      <label>sort
+        <select id="sort">
+          <option value="recent">recent</option>
+          <option value="score_desc">score desc</option>
+          <option value="score_asc">score asc</option>
+        </select>
+      </label>
+      <button id="refresh">Refresh</button>
+      <button id="export" class="secondary">Export CSV</button>
+      <button id="clear" class="warn">Clear results</button>
+    </div>
+    <div class="muted" id="status"></div>
+
+    <div style="overflow:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Company</th>
+            <th>Location</th>
+            <th>URL</th>
+            <th>Source (listing)</th>
+            <th>Posted At</th>
+            <th>Crawled At</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let current = [];
+    async function load() {
+      const params = new URLSearchParams();
+      const search = document.getElementById('search').value.trim();
+      const source = document.getElementById('source').value.trim();
+      const hasBudget = document.getElementById('hasBudget').checked;
+      const minScore = parseInt(document.getElementById('minScore').value || '0', 10);
+      const sort = document.getElementById('sort').value || '';
+      if (search) params.set('search', search);
+      if (source) params.set('source', source);
+      if (hasBudget) params.set('has_budget', '1');
+      if (!isNaN(minScore) && minScore > 0) params.set('min_score', String(minScore));
+      if (sort) params.set('sort', sort);
+      const st = document.getElementById('status');
+      st.textContent = 'Loading...';
+      try {
+        const res = await fetch('/api/read-jobs?' + params.toString());
+        const data = await res.json();
+        if (data && data.success) {
+          current = data.results || [];
+          st.textContent = '';
+          document.getElementById('count-pill').textContent = data.total || 0;
+          render();
+        } else {
+          st.textContent = 'Error loading results';
+        }
+      } catch (e) {
+        st.textContent = 'Error: ' + e.message;
+      }
+    }
+    function render() {
+      const tb = document.getElementById('tbody');
+      tb.innerHTML = current.map(r => `
+        <tr>
+          <td>${escapeHtml(r.title||'')}</td>
+          <td>${escapeHtml(r.company||'')}</td>
+          <td>${escapeHtml(r.location||'')}</td>
+          <td><a href="${r.url||'#'}" target="_blank">link</a></td>
+          <td>${escapeHtml(r.source_listing||'')}</td>
+          <td>${escapeHtml((r.date_posted||'').toString().slice(0,10))}</td>
+          <td>${escapeHtml((r.crawled_at||'').toString().slice(0,19))}</td>
+          <td>${Number(r.lead_score||0)}</td>
+        </tr>
+      `).join('');
+    }
+    function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+
+    async function clearResults(){
+      if (!confirm('Delete crawled results?')) return;
+      const r = await fetch('/api/clear-crawl-results', { method: 'POST' });
+      const d = await r.json();
+      if (d && d.success) { await load(); } else { alert('Clear failed'); }
+    }
+
+    function exportCsv(){
+      // Client-side export ensures filters are reflected
+      const headers = ['title','company','location','url','source_listing','date_posted','crawled_at','lead_score'];
+      const rows = [headers.join(',')].concat(current.map(r => headers.map(h => JSON.stringify((r[h]||'').toString())).join(','))).join('\n');
+      const blob = new Blob([rows], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'crawl_results.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('refresh').addEventListener('click', load);
+    document.getElementById('export').addEventListener('click', exportCsv);
+    document.getElementById('clear').addEventListener('click', clearResults);
+
+    window.addEventListener('load', load);
+  </script>
+</body>
+</html>
+<script>
+fetch('/api/policy').then(r=>r.json()).then(d=>{
+  if (d && d.success) {
+    const txt = document.getElementById('policyText');
+    if (txt && d.message) txt.textContent = d.message;
+    if (d && d.contact_email) {
+      const pc = document.getElementById('policyContact');
+      if (pc) pc.innerHTML = ` — Contact: <a href="mailto:${d.contact_email}">${d.contact_email}</a>`;
+    }
+  }
+}).catch(()=>{});
+</script>
+</html>

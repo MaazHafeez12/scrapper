@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin • Scraper</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 16px 20px; background: #111827; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { padding: 20px; max-width: 1100px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 16px; }
+    .card { background: #111827; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+    .card h3 { margin: 0 0 10px 0; font-size: 16px; color: #93c5fd; }
+    .muted { color: #94a3b8; }
+    pre { background: #0b1220; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; overflow: auto; max-height: 300px; }
+    button { background: #2563eb; color: white; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #374151; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #1f2937; font-size: 14px; }
+    th { color: #93c5fd; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row > * { margin: 4px 0; }
+    .pill { background: #0b1220; border: 1px solid #334155; padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div style="max-width:1200px;margin:1rem auto;padding:0 1rem;">
+    <div id="policyBanner" style="background:#fffbea;border:1px solid #f6e05e;color:#744210;padding:0.6rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">
+      <div>
+        <strong>Usage reminder:</strong>
+        <span id="policyText">Please respect robots.txt and site Terms of Service. Do not bypass login or CAPTCHA. Avoid collecting personal user data at scale.</span>
+        <span id="policyContact"></span>
+      </div>
+      <button onclick="document.getElementById('policyBanner').style.display='none'" style="background:#f6e05e;border:none;color:#744210;font-weight:700;border-radius:6px;padding:0.3rem 0.6rem;cursor:pointer;">Dismiss</button>
+    </div>
+  </div>
+  <header>
+    <div class="row">
+      <strong>Admin</strong>
+      <span class="pill" id="status-pill">loading…</span>
+    </div>
+    <div class="row">
+      <a href="/dashboard">Dashboard</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="grid">
+      <div class="card">
+        <h3>Live Jobs</h3>
+        <div class="row">
+          <div class="pill">Count: <span id="live-count">0</span></div>
+        </div>
+        <div style="margin-top:10px;">
+          <table id="platform-table">
+            <thead><tr><th>Platform</th><th>Count</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Database Stats</h3>
+        <div id="db-stats" class="muted">loading…</div>
+        <div class="row" style="margin-top:10px;">
+          <button id="clear-all">Clear ALL</button>
+          <button id="clear-jobs" class="secondary">Clear Jobs</button>
+          <button id="clear-leads" class="secondary">Clear Leads</button>
+          <label class="row"><input type="checkbox" id="clear-events" /> Clear events</label>
+          <label class="row"><input type="checkbox" id="clear-search" /> Clear search history</label>
+        </div>
+        <div id="clear-result" class="muted" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h3>Recent Events</h3>
+        <pre id="events">loading…</pre>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h3>Crawl Logs (last 20)</h3>
+        <div style="overflow:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Listing URL</th>
+                <th>Status</th>
+                <th>Found</th>
+                <th>Started</th>
+                <th>Finished</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody id="logs"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchSummary() {
+      try {
+        const res = await fetch('/api/admin/summary');
+        const data = await res.json();
+        document.getElementById('status-pill').textContent = data.success ? 'OK' : 'Error';
+        document.getElementById('live-count').textContent = data.live_jobs_count ?? 0;
+        // Platform table
+        const tbody = document.querySelector('#platform-table tbody');
+        tbody.innerHTML = '';
+        const pb = data.platform_breakdown || {};
+        Object.keys(pb).sort((a,b)=>pb[b]-pb[a]).forEach(p => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${p}</td><td>${pb[p]}</td>`;
+          tbody.appendChild(tr);
+        });
+        // DB stats
+        const s = data.db_stats || {};
+        if (s.error) {
+          document.getElementById('db-stats').textContent = 'Error: ' + s.error;
+        } else if (Object.keys(s).length) {
+          document.getElementById('db-stats').innerHTML = `
+            <div class="row">
+              <div class="pill">Total jobs: ${s.total_jobs ?? 0}</div>
+              <div class="pill">Remote: ${s.remote_jobs ?? 0}</div>
+              <div class="pill">New 24h: ${s.new_last_24h ?? 0}</div>
+              <div class="pill">Leads: ${s.total_leads ?? 0}</div>
+              <div class="pill">High-value leads: ${s.high_value_leads ?? 0}</div>
+            </div>
+          `;
+        } else {
+          document.getElementById('db-stats').textContent = 'No database or stats unavailable.';
+        }
+        // Events
+        const ev = (data.recent_events || []).slice().reverse().join('\n');
+        document.getElementById('events').textContent = ev || 'No events yet.';
+        await fetchLogs();
+      } catch (e) {
+        document.getElementById('status-pill').textContent = 'Error';
+        document.getElementById('events').textContent = 'Failed to load summary: ' + e.message;
+      }
+    }
+
+    async function fetchLogs() {
+      try {
+        const res = await fetch('/api/admin/crawl-logs?limit=20');
+        const data = await res.json();
+        const tb = document.getElementById('logs');
+        if (!data || !data.success) { tb.innerHTML = '<tr><td colspan="7">Error</td></tr>'; return; }
+        tb.innerHTML = (data.logs||[]).map(l => `
+          <tr>
+            <td>${escapeHtml(l.domain||'')}</td>
+            <td><a href="${l.listing_url||'#'}" target="_blank">link</a></td>
+            <td>${escapeHtml(l.status||'')}</td>
+            <td>${l.found_count ?? ''}</td>
+            <td>${escapeHtml((l.started_at||'').toString().slice(0,19))}</td>
+            <td>${escapeHtml((l.finished_at||'').toString().slice(0,19))}</td>
+            <td>${escapeHtml(l.error_message||'')}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        document.getElementById('logs').innerHTML = '<tr><td colspan="7">Failed to load logs</td></tr>';
+      }
+    }
+
+    function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+
+    async function clearDb(what) {
+      const clearEvents = document.getElementById('clear-events').checked;
+      const clearSearchHistory = document.getElementById('clear-search').checked;
+      document.getElementById('clear-result').textContent = 'Clearing…';
+      try {
+        const res = await fetch('/api/admin/clear-db', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ what, clearEvents, clearSearchHistory })
+        });
+        const data = await res.json();
+        document.getElementById('clear-result').textContent = data.success ? 'Cleared.' : ('Error: ' + (data.error || 'unknown'));
+        await fetchSummary();
+      } catch (e) {
+        document.getElementById('clear-result').textContent = 'Error: ' + e.message;
+      }
+    }
+
+    document.getElementById('clear-all').addEventListener('click', () => clearDb('all'));
+    document.getElementById('clear-jobs').addEventListener('click', () => clearDb('jobs'));
+    document.getElementById('clear-leads').addEventListener('click', () => clearDb('leads'));
+
+    fetchSummary();
+    setInterval(fetchSummary, 8000);
+  </script>
+</body>
+</html>
+<script>
+fetch('/api/policy').then(r=>r.json()).then(d=>{
+  if (d && d.success) {
+    const txt = document.getElementById('policyText');
+    if (txt && d.message) txt.textContent = d.message;
+    if (d && d.contact_email) {
+      const pc = document.getElementById('policyContact');
+      if (pc) pc.innerHTML = ` — Contact: <a href="mailto:${d.contact_email}">${d.contact_email}</a>`;
+    }
+  }
+}).catch(()=>{});
+</script>
+</html>

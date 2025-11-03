@@ -4,6 +4,8 @@ A powerful multi-platform job scraper with **AI-powered matching, auto-apply aut
 
 > 🎉 **NEW!** Automated job applications with browser automation - apply to multiple jobs automatically!
 
+> 🛠️ Production deployment architecture and Vercel + Worker split: see ARCHITECTURE.md and worker/WORKER.md for a scalable setup (thin APIs on Vercel, external Worker with signed webhooks, optional Postgres and blob storage). The current Flask app runs locally as a single-server MVP and already includes thin readers and an enqueue-crawl orchestrator.
+
 ## Features
 
 ✨ **Multi-Platform Support**

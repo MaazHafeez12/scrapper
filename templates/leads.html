@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leads</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 16px 20px; background: #111827; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    input, select, textarea { background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; }
+    button { background: #2563eb; color: white; border: none; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #374151; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #1f2937; text-align: left; padding: 8px; font-size: 14px; }
+    th { color: #93c5fd; }
+    .muted { color: #94a3b8; }
+    .col-email { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+    .flex { display: flex; gap: 8px; align-items: center; }
+    .grid { display: grid; gap: 10px; }
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+  </style>
+</head>
+<body>
+  <div style="max-width:1200px;margin:1rem auto;padding:0 1rem;">
+    <div id="policyBanner" style="background:#fffbea;border:1px solid #f6e05e;color:#744210;padding:0.6rem 0.9rem;border-radius:8px;margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;">
+        <div>
+            <strong>Usage reminder:</strong>
+            <span id="policyText">Please respect robots.txt and site Terms of Service. Do not bypass login or CAPTCHA. Avoid collecting personal user data at scale.</span>
+            <span id="policyContact"></span>
+        </div>
+        <button onclick="document.getElementById('policyBanner').style.display='none'" style="background:#f6e05e;border:none;color:#744210;font-weight:700;border-radius:6px;padding:0.3rem 0.6rem;cursor:pointer;">Dismiss</button>
+    </div>
+  </div>
+  <header>
+    <div class="flex">
+      <strong>Leads</strong>
+      <span id="count" class="muted"></span>
+    </div>
+    <div class="flex">
+      <a href="/dashboard">Dashboard</a>
+      <span class="muted">/</span>
+      <a href="/results">Results</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="controls">
+      <label>min score <input id="minScore" type="number" min="0" max="100" value="40" style="width:80px;" /></label>
+      <button id="refresh">Refresh</button>
+      <button id="export" class="secondary">Export CSV</button>
+    </div>
+    <div class="muted" id="status"></div>
+
+    <div style="overflow:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Title</th>
+            <th>Domain</th>
+            <th>Email</th>
+            <th>Platform</th>
+            <th>Score</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:20px;">Send Email</h3>
+    <div class="grid grid-2">
+      <div>
+        <div class="grid" style="grid-template-columns: 1fr 3fr; align-items:center;">
+          <label>To</label>
+          <input id="emailTo" placeholder="lead@example.com" />
+          <label>Subject</label>
+          <input id="emailSubject" value="Quick intro re: your job posting" />
+          <label>Message</label>
+          <textarea id="emailBody" rows="6">Hi {{name|there}},
+
+I saw your job posting for {{title}} at {{company}} and thought I could help. I’ve done similar work with {{tech_stack}} and can get started quickly.
+
+Would you be open to a brief chat this week?
+
+Best,
+{{sender_name}}
+{{sender_email}}</textarea>
+        </div>
+        <div class="flex" style="margin-top:8px;">
+          <button id="sendEmail">Send Email</button>
+          <span id="emailStatus" class="muted"></span>
+        </div>
+      </div>
+      <div class="muted">
+        Notes:
+        <ul>
+          <li>Configure SENDGRID_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS on the server for sending.</li>
+          <li>Use placeholders like {{company}}, {{title}}, {{tech_stack}}. We’ll perform a light replacement.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let leads = [];
+
+    async function load(){
+      const st = document.getElementById('status');
+      st.textContent = 'Loading...';
+      try{
+        const minScore = parseInt(document.getElementById('minScore').value||'0',10);
+        const res = await fetch('/api/read-leads?min_score='+encodeURIComponent(minScore));
+        const data = await res.json();
+        if(data && data.success){
+          leads = data.results || [];
+          document.getElementById('count').textContent = '(' + leads.length + ')';
+          st.textContent = '';
+          render();
+        } else {
+          st.textContent = 'Error loading leads';
+        }
+      }catch(e){ st.textContent = 'Error: '+e.message; }
+    }
+
+    function render(){
+      const tb = document.getElementById('tbody');
+      tb.innerHTML = leads.map((l,i)=>`
+        <tr>
+          <td>${escapeHtml(l.company||'')}</td>
+          <td>${escapeHtml(l.title||'')}</td>
+          <td>${escapeHtml(l.domain||'')}</td>
+          <td class="col-email">${escapeHtml(l.contact_email||'')}</td>
+          <td>${escapeHtml(l.platform||'')}</td>
+          <td>${Number(l.lead_score||0)}</td>
+          <td><button onclick="prefill(${i})">Use</button></td>
+        </tr>
+      `).join('');
+    }
+
+    function prefill(i){
+      const l = leads[i];
+      document.getElementById('emailTo').value = l.contact_email || '';
+      let body = document.getElementById('emailBody').value;
+      const repl = (txt, key, val) => txt.replaceAll('{{'+key+'}}', val||'').replaceAll('{{'+key+'|there}}', (val||'there'));
+      body = repl(body, 'company', l.company||'');
+      body = repl(body, 'title', l.title||'');
+      body = body.replaceAll('{{tech_stack}}', Array.isArray(l.technologies)? l.technologies.slice(0,5).join(', ') : (l.tech_stack||''));
+      document.getElementById('emailBody').value = body;
+      document.getElementById('emailSubject').value = `Quick intro re: ${l.title||'your role'}`;
+    }
+
+    async function sendEmail(){
+      const to = document.getElementById('emailTo').value.trim();
+      const subject = document.getElementById('emailSubject').value.trim();
+      const text = document.getElementById('emailBody').value;
+      const st = document.getElementById('emailStatus');
+      if(!to || !subject || !text){ st.textContent = 'Fill to/subject/body'; return; }
+      st.textContent = 'Sending...';
+      try{
+        const r = await fetch('/api/outreach/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ to, subject, text })});
+        const d = await r.json();
+        if(d && d.success){ st.textContent = 'Sent'; } else { st.textContent = 'Failed: '+(d && (d.error||d.text)); }
+      }catch(e){ st.textContent = 'Error: '+e.message; }
+    }
+
+    function escapeHtml(t){ const d=document.createElement('div'); d.textContent=t; return d.innerHTML; }
+
+    document.getElementById('refresh').addEventListener('click', load);
+    document.getElementById('export').addEventListener('click', ()=>{
+      const minScore = parseInt(document.getElementById('minScore').value||'0',10);
+      window.open('/api/export-leads?min_score='+encodeURIComponent(minScore)+'&limit=1000','_blank');
+    });
+    document.getElementById('sendEmail').addEventListener('click', sendEmail);
+
+    window.addEventListener('load', ()=>{
+      load();
+      fetch('/api/policy').then(r=>r.json()).then(d=>{
+        if(d && d.success){
+          const txt=document.getElementById('policyText'); if(d.message) txt.textContent = d.message;
+          if(d.contact_email){ const pc=document.getElementById('policyContact'); pc.innerHTML = ` — Contact: <a href="mailto:${d.contact_email}">${d.contact_email}</a>`; }
+        }
+      }).catch(()=>{});
+    });
+  </script>
+</body>
+</html>
