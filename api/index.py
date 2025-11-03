@@ -8199,38 +8199,7 @@ def _smtp_send(to_email: str, subject: str, body: str) -> bool:
         s.send_message(msg)
     return True
 
-@app.route('/api/outreach/send', methods=['POST'])
-def api_outreach_send():
-    try:
-        payload = request.get_json(silent=True) or {}
-        to_email = (payload.get('to') or '').strip()
-        subject = (payload.get('subject') or '').strip()
-        text = payload.get('text') or ''
-        if not to_email or not subject or not text:
-            return jsonify({'success': False, 'error': 'to, subject, text required'}), 400
-        # DNC enforcement
-        if db and db.is_do_not_contact(to_email):
-            return jsonify({'success': False, 'error': 'do_not_contact'}), 403
-        # Append unsubscribe footer
-        body = _append_unsubscribe(text)
-        sent = False
-        error = None
-        try:
-            sent = _smtp_send(to_email, subject, body)
-        except Exception as e:
-            error = str(e)
-        # Log outreach
-        if db:
-            try:
-                db.record_outreach(to_email=to_email, subject=subject, body=body, transport='smtp' if sent else 'none', status='sent' if sent else 'failed', error=error)
-            except Exception:
-                pass
-        if sent:
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': error or 'send failed'}), 500
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+## Duplicate '/api/outreach/send' removed in favor of consolidated implementation earlier in file
 
 @app.route('/api/leads/opt-out', methods=['POST'])
 def api_leads_opt_out():
