@@ -7895,9 +7895,7 @@ def schedule_report_job():
 # Admin pages and Monitoring/Analytics APIs
 # ----------------------
 
-@app.route('/admin')
-def admin_page():
-    return send_from_directory('../templates', 'admin.html')
+## '/admin' route is defined earlier with admin_required; avoid duplicate endpoint here
 
 @app.route('/analytics')
 def analytics_page():
