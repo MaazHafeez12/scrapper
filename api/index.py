@@ -284,19 +284,38 @@ app.config.update(
 )
 
 # --- Logging setup (rotating file) ---
-LOG_DIR = os.getenv('LOG_DIR', 'logs')
-LOG_FILE = os.getenv('LOG_FILE', os.path.join(LOG_DIR, 'app.log'))
-os.makedirs(LOG_DIR, exist_ok=True)
+# Vercel serverless filesystem is read-only except /tmp. Prefer /tmp/logs when on Vercel.
+def _ensure_dir(path: str) -> Optional[str]:
+    try:
+        os.makedirs(path, exist_ok=True)
+        return path
+    except Exception:
+        return None
+
+_default_log_dir = '/tmp/logs' if os.getenv('VERCEL') else 'logs'
+LOG_DIR = os.getenv('LOG_DIR', _default_log_dir)
+if not _ensure_dir(LOG_DIR):
+    # Fallback to /tmp/logs if custom path failed
+    tmp_fallback = _ensure_dir('/tmp/logs')
+    LOG_DIR = tmp_fallback or None
+
+LOG_FILE = None
+if LOG_DIR:
+    LOG_FILE = os.getenv('LOG_FILE', os.path.join(LOG_DIR, 'app.log'))
+
 logger = logging.getLogger('scrapper')
 if not logger.handlers:
     logger.setLevel(logging.INFO)
     try:
-        fh = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3)
-        fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-        fh.setFormatter(fmt)
-        logger.addHandler(fh)
-    except Exception as e:
-        # Fallback to stdout
+        if LOG_FILE:
+            fh = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3)
+            fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+            fh.setFormatter(fmt)
+            logger.addHandler(fh)
+        else:
+            raise RuntimeError('No writable LOG_FILE available')
+    except Exception:
+        # Fallback to stdout if file logging is unavailable
         sh = logging.StreamHandler(sys.stdout)
         fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
         sh.setFormatter(fmt)
