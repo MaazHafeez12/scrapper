@@ -270,7 +270,10 @@ except ImportError as e:
     JobService = None
     JobPriority = None
 
-app = Flask(__name__)
+# Configure Flask with explicit template directory so Serverless bundle can find Jinja templates
+_HERE = os.path.dirname(__file__)
+_TEMPLATES_DIR = os.path.normpath(os.path.join(_HERE, '..', 'templates'))
+app = Flask(__name__, template_folder=_TEMPLATES_DIR)
 # Basic security defaults: use env SECRET_KEY if provided; otherwise a per-run random fallback
 try:
     import secrets
@@ -1851,13 +1854,13 @@ def scrape_linkedin_live(keywords: str, limit: int = 30) -> List[Dict]:
 # Flask Routes
 @app.route('/')
 def dashboard():
-    """Main dashboard - redirects to new scraper UI."""
-    return send_from_directory('../templates', 'dashboard.html')
+    """Main dashboard - render new scraper UI."""
+    return render_template('dashboard.html')
 
 @app.route('/dashboard')
 def new_dashboard():
     """New clickable job scraper dashboard."""
-    return send_from_directory('../templates', 'dashboard.html')
+    return render_template('dashboard.html')
 
 @app.route('/api/policy')
 def policy_info():
@@ -2506,7 +2509,7 @@ def api_send_alias():
 @app.route('/admin')
 @admin_required
 def admin_page():
-    return send_from_directory('../templates', 'admin.html')
+    return render_template('admin.html')
 
 @app.route('/api/live-scrape', methods=['POST'])
 def live_scrape():
@@ -3739,11 +3742,11 @@ def crawl_last_run():
 
 @app.route('/results')
 def results_page():
-    return send_from_directory('../templates', 'results.html')
+    return render_template('results.html')
 
 @app.route('/leads')
 def leads_page():
-    return send_from_directory('../templates', 'leads.html')
+    return render_template('leads.html')
 
 @app.route('/api/crawl-results')
 def crawl_results_api():
@@ -7899,7 +7902,7 @@ def schedule_report_job():
 
 @app.route('/analytics')
 def analytics_page():
-    return send_from_directory('../templates', 'analytics.html')
+    return render_template('analytics.html')
 
 @app.route('/api/admin/summary')
 def api_admin_summary():
