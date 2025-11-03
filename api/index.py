@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 import threading
 import time
 from urllib.parse import quote
+from urllib.parse import urljoin
 import re
 import csv
 import io
@@ -2202,6 +2203,242 @@ def scrape_wwr_rss(keywords: str, limit: int = 20) -> List[Dict]:
             'lead_score': 50
         }]
     return jobs
+
+# ----------------------
+# Paste-URLs crawl (listing -> jobs)
+# ----------------------
+
+def is_probable_job_link(href: str, base_domain: str) -> bool:
+    if not href:
+        return False
+    h = href.lower()
+    if any(s in h for s in ['/job/', '/jobs/', '/career', '/careers', '/position', '/positions', '/opening', '/vacancy']):
+        return True
+    # If same domain and path is not home
+    try:
+        d = extract_domain(href)
+        if d and base_domain and d.endswith(base_domain):
+            path = urlparse(href).path or ''
+            return len(path.strip('/')) > 0 and path != '/'
+    except Exception:
+        pass
+    return False
+
+def extract_text(element) -> str:
+    try:
+        return element.get_text(" ", strip=True)
+    except Exception:
+        return ''
+
+def parse_job_page(url: str, html: str) -> Dict:
+    soup = BeautifulSoup(html, 'html.parser')
+    # Canonical URL
+    canonical = ''
+    try:
+        link = soup.find('link', rel=lambda v: v and 'canonical' in v.lower())
+        if link and link.get('href'):
+            canonical = link['href']
+    except Exception:
+        pass
+    if not canonical:
+        canonical = url
+    canonical = canonical.strip()
+
+    # Title
+    title = ''
+    for sel in [
+        lambda s: s.find('h1'),
+        lambda s: s.find('meta', attrs={'property':'og:title'}),
+        lambda s: s.find('title')
+    ]:
+        try:
+            node = sel(soup)
+            if node:
+                title = node.get('content') if node.name == 'meta' else extract_text(node)
+                if title:
+                    break
+        except Exception:
+            continue
+
+    # Company (best-effort)
+    company = ''
+    candidates = [
+        ('meta', {'property':'og:site_name'}),
+        ('meta', {'name':'twitter:site'}),
+        ('div', {'class': re.compile(r'company|employer', re.I)}),
+        ('span', {'class': re.compile(r'company|employer', re.I)}),
+        ('a', {'class': re.compile(r'company|employer', re.I)})
+    ]
+    for tag, attrs in candidates:
+        n = soup.find(tag, attrs=attrs)
+        if n:
+            company = n.get('content') if tag == 'meta' else extract_text(n)
+            if company:
+                break
+
+    # Location (best-effort)
+    location = ''
+    loc_node = soup.find(attrs={'class': re.compile(r'location', re.I)}) or soup.find('span', string=re.compile(r'(?i)remote|hybrid|\b[A-Z][a-z]+,?\s*[A-Z]{2}\b'))
+    if loc_node:
+        location = extract_text(loc_node)
+
+    # Description
+    desc = ''
+    main = soup.find('article') or soup.find('main') or soup.find('div', attrs={'class': re.compile(r'(job|content|description)', re.I)}) or soup.body
+    if main:
+        desc = extract_text(main)
+    if len(desc) > 2000:
+        desc = desc[:2000]
+
+    platform = extract_domain(url) or 'Custom'
+    return {
+        'title': title or 'Job Posting',
+        'company': company or platform.title(),
+        'location': location or 'Remote',
+        'platform': platform,
+        'url': canonical,
+        'original_url': url,
+        'description': desc,
+        'date_posted': datetime.now().strftime('%Y-%m-%d')
+    }
+
+def compute_canonical_hash(url: str) -> str:
+    import hashlib
+    u = (url or '').strip().lower()
+    # strip query/fragment
+    try:
+        p = urlparse(u)
+        base = f"{p.scheme}://{p.netloc}{p.path}"
+    except Exception:
+        base = u
+    return hashlib.sha256(base.encode('utf-8')).hexdigest()
+
+@app.route('/api/crawl-urls', methods=['POST'])
+def crawl_urls_endpoint():
+    """Crawl one or more listing page URLs, extract job links, scrape job pages, and store results.
+    Request: { urls: [string], max_links_per_listing?: int }
+    """
+    data = request.get_json() or {}
+    urls: List[str] = data.get('urls') or []
+    max_links = int(data.get('max_links_per_listing', 25))
+    if not isinstance(urls, list) or not urls:
+        return jsonify({'success': False, 'error': 'urls must be a non-empty array'}), 400
+
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    created = 0
+    updated = 0
+    collected: List[Dict] = []
+
+    for listing_url in urls:
+        try:
+            r = requests.get(listing_url, headers=headers, timeout=15)
+            if r.status_code != 200:
+                print(f"Listing fetch non-200 for {listing_url}: {r.status_code}")
+                continue
+            base_domain = extract_domain(listing_url) or ''
+            soup = BeautifulSoup(r.text, 'html.parser')
+            anchors = soup.find_all('a', href=True)
+            job_links = []
+            for a in anchors:
+                try:
+                    href = a['href']
+                    abs_url = urljoin(listing_url, href)
+                    if is_probable_job_link(abs_url, base_domain):
+                        job_links.append(abs_url)
+                        if len(job_links) >= max_links:
+                            break
+                except Exception:
+                    continue
+
+            # Deduplicate job_links
+            seen_links = set()
+            unique_links = []
+            for jl in job_links:
+                key = compute_canonical_hash(jl)
+                if key not in seen_links:
+                    unique_links.append(jl)
+                    seen_links.add(key)
+
+            # Fetch each job page
+            for jl in unique_links:
+                try:
+                    jr = requests.get(jl, headers=headers, timeout=15)
+                    if jr.status_code != 200:
+                        continue
+                    job = parse_job_page(jl, jr.text)
+                    canon_hash = compute_canonical_hash(job.get('url'))
+                    # Save to DB or memory
+                    saved = False
+                    if db:
+                        try:
+                            # Reuse existing DB API
+                            exists_id = db.job_exists(canon_hash)
+                            if exists_id:
+                                db.update_job_last_seen(exists_id)
+                                updated += 1
+                            else:
+                                job_data = {
+                                    'title': job.get('title','Unknown'),
+                                    'company': job.get('company','Unknown'),
+                                    'location': job.get('location','Unknown'),
+                                    'platform': job.get('platform','Unknown'),
+                                    'url': job.get('url'),
+                                    'description': job.get('description',''),
+                                    'salary_range': job.get('salary_range',''),
+                                    'experience_level': job.get('experience_level',''),
+                                    'employment_type': job.get('employment_type',''),
+                                    'date_posted': job.get('date_posted', datetime.now().strftime('%Y-%m-%d')),
+                                    'keywords_used': scraping_status.get('last_search','')
+                                }
+                                db.insert_job(job_data)
+                                created += 1
+                            saved = True
+                        except Exception as e:
+                            print(f"DB save error for {jl}: {e}")
+                    if not saved:
+                        # Fallback: add to live_jobs (in-memory)
+                        live_jobs.append(job)
+                        created += 1
+                        collected.append(job)
+                except Exception as e:
+                    print(f"Job fetch error: {e}")
+                time.sleep(0.25)  # polite delay per job
+        except Exception as e:
+            print(f"Listing error: {e}")
+
+    return jsonify({
+        'success': True,
+        'created': created,
+        'updated': updated,
+        'collected_preview': collected[:20]
+    })
+
+@app.route('/api/export-jobs')
+def export_jobs_endpoint():
+    """Export jobs as CSV, from DB when available else in-memory."""
+    search = (request.args.get('search') or '').lower().strip()
+    limit = int(request.args.get('limit', 1000))
+    rows: List[Dict] = []
+    if db and hasattr(db, 'get_jobs'):
+        try:
+            rows = db.get_jobs(limit=limit, search=search or None)
+        except Exception as e:
+            print(f"DB get_jobs export error: {e}")
+    if not rows:
+        rows = live_jobs
+        if search:
+            rows = [j for j in rows if search in (j.get('title','').lower()+j.get('company','').lower()+j.get('description','').lower())]
+        rows = rows[:limit]
+
+    output = io.StringIO()
+    headers = ['title','company','location','platform','url','date_posted','description']
+    writer = csv.DictWriter(output, fieldnames=headers)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: r.get(k,'') for k in headers})
+    mem = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+    filename = f"jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return send_file(mem, mimetype='text/csv', as_attachment=True, download_name=filename)
 
 def scrape_nodesk_rss(keywords: str, limit: int = 15) -> List[Dict]:
     jobs: List[Dict] = []

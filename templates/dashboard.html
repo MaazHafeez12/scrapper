@@ -239,6 +239,21 @@
             </div>
             <div id="statusMessage" class="status hidden"></div>
         </div>
+
+        <div class="search-box" style="margin-top:1rem;">
+            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-start;">
+                <textarea id="crawlUrls" placeholder="Paste one or more listing page URLs (one per line)" style="flex:1;min-height:90px;padding:0.8rem;border:2px solid #e0e0e0;border-radius:12px;font-family:monospace;"></textarea>
+                <div style="display:flex;flex-direction:column;gap:0.5rem;min-width:220px;">
+                    <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;border:2px solid #e0e0e0;border-radius:12px;padding:0 0.8rem;">
+                        <span style="font-size:0.95rem;color:#4a5568;">Max links per listing</span>
+                        <input type="number" id="maxLinks" value="25" min="1" max="200" style="width:70px;border:none;outline:none;" />
+                    </label>
+                    <button onclick="crawlUrls()" class="btn-search" id="crawlBtn">🕷️ Crawl URLs</button>
+                    <button onclick="exportJobs()" class="btn-sample" id="exportJobsBtn">⬇️ Export Jobs CSV</button>
+                </div>
+            </div>
+            <div id="crawlStatus" class="status hidden" style="margin-top:0.75rem;"></div>
+        </div>
         
         <div class="stats">
             <div class="stat-card">
@@ -424,6 +439,50 @@
                     </div>
                 `;
             }
+        }
+
+        async function crawlUrls() {
+            const textarea = document.getElementById('crawlUrls');
+            const maxLinks = parseInt(document.getElementById('maxLinks').value || '25', 10);
+            const status = document.getElementById('crawlStatus');
+            const btn = document.getElementById('crawlBtn');
+            const urls = (textarea.value || '').split(/\r?\n/).map(u => u.trim()).filter(Boolean);
+            if (urls.length === 0) {
+                status.className = 'status error';
+                status.textContent = 'Please paste one or more listing URLs first.';
+                status.classList.remove('hidden');
+                return;
+            }
+            btn.disabled = true; btn.textContent = '🕷️ Crawling...';
+            status.className = 'status';
+            status.textContent = `Crawling ${urls.length} listing URL(s) ...`;
+            status.classList.remove('hidden');
+            try {
+                const res = await fetch('/api/crawl-urls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls, max_links_per_listing: maxLinks })
+                });
+                const data = await res.json();
+                if (data && data.success) {
+                    status.className = 'status success';
+                    status.textContent = `✅ Created ${data.created}, updated ${data.updated}.`;
+                    // Refresh jobs panel
+                    await loadJobs();
+                } else {
+                    status.className = 'status error';
+                    status.textContent = `❌ Crawl failed: ${data && data.error ? data.error : 'Unknown error'}`;
+                }
+            } catch (e) {
+                status.className = 'status error';
+                status.textContent = '❌ Network or server error during crawl.';
+            } finally {
+                btn.disabled = false; btn.textContent = '🕷️ Crawl URLs';
+            }
+        }
+
+        function exportJobs() {
+            window.open('/api/export-jobs?limit=1000', '_blank');
         }
         
         function displayJobs(jobs) {
